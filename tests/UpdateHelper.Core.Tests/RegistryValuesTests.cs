@@ -78,6 +78,37 @@ public class RegistryValuesTests
         Assert.True(e.IsUpdateOrPatch);
     }
 
+    // 真实情况：QQ、WPS 的登记里 InstallLocation 是空的，只能从图标或卸载程序路径推断
+    [Theory]
+    [InlineData(@"C:\Program Files\Tencent\QQNT\QQ.exe,0", @"C:\Program Files\Tencent\QQNT\Uninstall.exe", @"C:\Program Files\Tencent\QQNT")]
+    [InlineData(@"D:\WPS Office\ksolaunch.exe", @"D:\WPS Office\12.1.0.23125\utility\uninst.exe", @"D:\WPS Office")]
+    [InlineData(null, "\"C:\\Apps\\Foo\\unins000.exe\" /S", @"C:\Apps\Foo")]
+    [InlineData(@"C:\Windows\Installer\{GUID}\icon.ico", @"MsiExec.exe /X{GUID}", null)]          // Windows 目录不采用
+    [InlineData(@"C:\ProgramData\Package Cache\{GUID}\setup.exe,0", null, null)]                  // 安装包缓存不采用
+    [InlineData(@"D:\setup.exe", null, null)]                                                       // 磁盘根目录不采用
+    public void ToEntry_infers_install_location_when_missing(string? icon, string? uninstall, string? expected)
+    {
+        var e = RegistryValues.ToEntry("x", UninstallHive.LocalMachine64, Values(new()
+        {
+            ["DisplayName"] = "X",
+            ["DisplayIcon"] = icon,
+            ["UninstallString"] = uninstall,
+        }));
+        Assert.Equal(expected, e!.InstallLocation, ignoreCase: true);
+    }
+
+    [Fact]
+    public void ToEntry_keeps_explicit_install_location()
+    {
+        var e = RegistryValues.ToEntry("x", UninstallHive.LocalMachine64, Values(new()
+        {
+            ["DisplayName"] = "X",
+            ["InstallLocation"] = @"E:\Real",
+            ["DisplayIcon"] = @"C:\Other\x.exe",
+        }));
+        Assert.Equal(@"E:\Real", e!.InstallLocation);
+    }
+
     [Fact]
     public void ToEntry_returns_null_when_key_is_unreadable()   // Review Focus 2
     {
