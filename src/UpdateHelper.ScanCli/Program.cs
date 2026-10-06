@@ -99,6 +99,8 @@ if (installId is not null)
     var name = target.Group?.Name ?? target.Candidate.Name;
     Console.WriteLine($"{name}：{target.Candidate.InstalledVersion} → {target.Candidate.AvailableVersion}");
     Console.WriteLine($"判断：【{TierName(target.Tier)}】{target.Reason}");
+    if (!UpdateExecutor.CanCheckRunningState(target))
+        Console.WriteLine($"注意：无法确定 {name} 的安装位置，没法检查它是否正在运行。请先确认它已经关闭，再继续。");
 
     if (!assumeYes)
     {

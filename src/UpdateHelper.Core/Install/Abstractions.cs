@@ -5,9 +5,12 @@ public interface IPackageInstaller
 {
     string Name { get; }
 
-    /// <summary>静默升级。出错可以抛异常，也可以返回 Success=false；取消时抛 OperationCanceledException。</summary>
-    Task<InstallerReport> UpgradeAsync(string packageId, InstallScopeHint scope, IProgress<double>? progress,
-        CancellationToken cancellationToken);
+    /// <summary>
+    /// 静默升级到 targetVersion（判断层评估过的那个版本）。可用版本已经变了就返回失败，不能装别的版本。
+    /// 出错可以抛异常，也可以返回 Success=false；取消时抛 OperationCanceledException。
+    /// </summary>
+    Task<InstallerReport> UpgradeAsync(string packageId, string targetVersion, InstallScopeHint scope,
+        IProgress<double>? progress, CancellationToken cancellationToken);
 }
 
 /// <summary>重新读取某个卸载登记的当前版本，用于装后核对。</summary>

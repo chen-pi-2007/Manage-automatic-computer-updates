@@ -26,23 +26,46 @@ public sealed class UpdateExecutor(
         if (group is null || update.Tier is UpdateTier.NeverAuto or UpdateTier.Ignored)
             return new ExecuteResult(ExecuteOutcome.Refused, $"不能更新：{update.Reason}", null);
 
-        // 2. 自动模式下的重试上限
-        if (automatic && CountFailures(c) >= MaxAutomaticRetries)
-            return new ExecuteResult(ExecuteOutcome.Refused,
-                $"这个版本已经失败 {MaxAutomaticRetries} 次，不再自动重试", null);
+        // 2. 自动模式下的重试上限（读不了历史就不冒险）
+        if (automatic)
+        {
+            int failures;
+            try
+            {
+                failures = CountFailures(c);
+            }
+            catch (Exception ex)
+            {
+                return new ExecuteResult(ExecuteOutcome.Refused, $"无法读取更新历史（{ex.Message}），自动更新跳过", null);
+            }
+            if (failures >= MaxAutomaticRetries)
+                return new ExecuteResult(ExecuteOutcome.Refused,
+                    $"这个版本已经失败 {MaxAutomaticRetries} 次，不再自动重试", null);
+        }
 
         // 3. 正在运行就不装，绝不替用户关闭程序
-        var running = processes.FindRunningUnder(group.InstallLocations.ToList());
-        if (running.Count > 0)
-            return new ExecuteResult(ExecuteOutcome.Refused,
-                $"{group.Name} 正在运行（{string.Join("、", running)}），请先关闭再更新", null);
+        var directories = RunningCheckDirectories(group);
+        if (directories.Count == 0)
+        {
+            // 不知道程序在哪，就没法确认它是否在运行：自动模式跳过；手动模式由用户自己确认（界面会提示）
+            if (automatic)
+                return new ExecuteResult(ExecuteOutcome.Refused,
+                    $"无法确定 {group.Name} 的安装位置，不能确认它是否在运行，自动更新跳过", null);
+        }
+        else
+        {
+            var running = processes.FindRunningUnder(directories);
+            if (running.Count > 0)
+                return new ExecuteResult(ExecuteOutcome.Refused,
+                    $"{group.Name} 正在运行（{string.Join("、", running)}），请先关闭再更新", null);
+        }
 
         var scope = group.Primary?.Hive == UninstallHive.CurrentUser ? InstallScopeHint.User : InstallScopeHint.Machine;
 
         ExecuteResult result;
         try
         {
-            var report = await installer.UpgradeAsync(c.PackageId, scope, progress, cancellationToken);
+            var report = await installer.UpgradeAsync(c.PackageId, c.AvailableVersion, scope, progress, cancellationToken);
             result = Interpret(report, update);
         }
         catch (OperationCanceledException)
@@ -55,8 +78,16 @@ public sealed class UpdateExecutor(
         }
 
         // ToVersion 一律记"目标版本"，这样重试次数可以按"包 id + 目标版本"统计
-        history.Append(new HistoryRecord(_clock.GetLocalNow(), c.PackageId, group.Name, c.InstalledVersion,
-            c.AvailableVersion, result.Outcome, result.Message, automatic));
+        try
+        {
+            history.Append(new HistoryRecord(_clock.GetLocalNow(), c.PackageId, group.Name, c.InstalledVersion,
+                c.AvailableVersion, result.Outcome, result.Message, automatic));
+        }
+        catch (Exception ex)
+        {
+            // 软件可能已经装好了，结果必须照常交给用户
+            result = result with { Message = $"{result.Message}（更新历史写入失败：{ex.Message}）" };
+        }
         return result;
     }
 
@@ -72,11 +103,13 @@ public sealed class UpdateExecutor(
         if (report.RebootRequired)
             return new ExecuteResult(ExecuteOutcome.NeedsReboot, "已安装，需要重启电脑才能完成（不会自动重启）", null);
 
-        var after = versions.GetInstalledVersion(ProbeKey(update));
+        var key = ProbeKey(update);
+        var after = versions.GetInstalledVersion(key);
         if (after is null)
             return new ExecuteResult(ExecuteOutcome.Succeeded, "已安装，但登记信息有变化，下次扫描时再确认版本", null);
 
-        var before = update.Candidate.InstalledVersion;
+        // 和扫描时同一个注册表键的版本比较；winget 显示的版本可能是换算过的（如 3.10.2 对应注册表 3.10.2150.0）
+        var before = RegistryVersionAtScan(update.Group!, key) ?? update.Candidate.InstalledVersion;
         var afterVersion = AppVersion.Parse(after);
         var beforeVersion = AppVersion.Parse(before);
         var newer = afterVersion is not null && beforeVersion is not null
@@ -87,6 +120,27 @@ public sealed class UpdateExecutor(
 
         return new ExecuteResult(ExecuteOutcome.Succeeded, $"已从 {before} 更新到 {after}", after);
     }
+
+    /// <summary>
+    /// "软件是否在运行"要检查的目录：登记（或推断）的安装位置，加上它的后台项目（服务、自启项等）程序所在目录。
+    /// 返回空列表表示没法检查。
+    /// </summary>
+    public static IReadOnlyList<string> RunningCheckDirectories(SoftwareGroup group) =>
+        group.InstallLocations
+            .Concat(group.Background.Select(b => b.ExecutablePath is null ? null : Path.GetDirectoryName(b.ExecutablePath))
+                                    .OfType<string>())
+            .Where(d => d.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>界面用：手动更新前，如果没法确认软件是否在运行，要提醒用户先自己关掉。</summary>
+    public static bool CanCheckRunningState(JudgedUpdate update) =>
+        update.Group is not null && RunningCheckDirectories(update.Group).Count > 0;
+
+    private static string? RegistryVersionAtScan(SoftwareGroup group, string key) =>
+        (group.Primary is null ? group.Components : group.Components.Prepend(group.Primary))
+            .FirstOrDefault(e => string.Equals(e.KeyName, key, StringComparison.OrdinalIgnoreCase))
+            ?.DisplayVersion;
 
     /// <summary>装后核对用的卸载键：优先用候选 ProductCodes 中能对上的那个，否则用主条目的键。</summary>
     private static string ProbeKey(JudgedUpdate update)

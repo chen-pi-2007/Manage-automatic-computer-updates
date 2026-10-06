@@ -11,7 +11,7 @@ public sealed class WingetInstaller : IPackageInstaller
 {
     public string Name => "winget";
 
-    public async Task<InstallerReport> UpgradeAsync(string packageId, InstallScopeHint scope,
+    public async Task<InstallerReport> UpgradeAsync(string packageId, string targetVersion, InstallScopeHint scope,
         IProgress<double>? progress, CancellationToken cancellationToken)
     {
         var manager = WingetSession.CreateManager();
@@ -40,6 +40,17 @@ public sealed class WingetInstaller : IPackageInstaller
             AllowHashMismatch = false,
         };
 
+        // 只装判断层评估过、用户确认过的那个版本。winget 源这期间更新了就不装，避免装上没经过判断的版本
+        var latest = package.DefaultInstallVersion?.Version;
+        if (!string.Equals(latest, targetVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            var versionId = FindVersion(package, targetVersion);
+            if (versionId is null)
+                return new InstallerReport(false, false,
+                    $"可用版本已经变了（现在是 {latest ?? "未知"}，检查时是 {targetVersion}），请重新检查更新", null);
+            options.PackageVersionId = versionId;
+        }
+
         var winProgress = new Progress<InstallProgress>(p =>
             progress?.Report(p.DownloadProgress * 0.5 + p.InstallationProgress * 0.5));
 
@@ -52,6 +63,17 @@ public sealed class WingetInstaller : IPackageInstaller
         var detail = result.ExtendedErrorCode?.Message;
         var message = Describe(result.Status) + (string.IsNullOrWhiteSpace(detail) ? "" : $"：{detail}");
         return new InstallerReport(false, false, message, result.InstallerErrorCode);
+    }
+
+    /// <summary>在可用版本里找指定版本；COM 列表按下标遍历。</summary>
+    private static PackageVersionId? FindVersion(CatalogPackage package, string version)
+    {
+        var versions = package.AvailableVersions;
+        for (var i = 0; i < versions.Count; i++)
+        {
+            if (string.Equals(versions[i].Version, version, StringComparison.OrdinalIgnoreCase)) return versions[i];
+        }
+        return null;
     }
 
     private static string Describe(InstallResultStatus status) => status switch

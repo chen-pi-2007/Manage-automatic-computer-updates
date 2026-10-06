@@ -12,12 +12,14 @@ public class UpdateExecutorTests
     private sealed class FakeInstaller(Func<InstallerReport> behave) : IPackageInstaller
     {
         public List<(string Id, InstallScopeHint Scope)> Calls { get; } = [];
+        public List<string> Targets { get; } = [];
         public string Name => "fake";
 
-        public Task<InstallerReport> UpgradeAsync(string packageId, InstallScopeHint scope, IProgress<double>? progress,
-            CancellationToken cancellationToken)
+        public Task<InstallerReport> UpgradeAsync(string packageId, string targetVersion, InstallScopeHint scope,
+            IProgress<double>? progress, CancellationToken cancellationToken)
         {
             Calls.Add((packageId, scope));
+            Targets.Add(targetVersion);
             progress?.Report(1.0);
             return Task.FromResult(behave());
         }
@@ -35,7 +37,23 @@ public class UpdateExecutorTests
 
     private sealed class FakeProcesses(params string[] running) : IRunningProcessProbe
     {
-        public IReadOnlyList<string> FindRunningUnder(IReadOnlyList<string> directories) => running;
+        public List<IReadOnlyList<string>> Asked { get; } = [];
+        public IReadOnlyList<string> FindRunningUnder(IReadOnlyList<string> directories)
+        {
+            Asked.Add(directories);
+            return running;
+        }
+    }
+
+    private sealed class BrokenHistory(bool failRead, bool failWrite) : IUpdateHistory
+    {
+        public void Append(HistoryRecord record)
+        {
+            if (failWrite) throw new IOException("文件被另一个进程占用");
+        }
+
+        public IReadOnlyList<HistoryRecord> ReadAll()
+            => failRead ? throw new UnauthorizedAccessException("拒绝访问") : [];
     }
 
     private sealed class MemoryHistory : IUpdateHistory
@@ -249,5 +267,130 @@ public class UpdateExecutorTests
     private sealed class SyncProgress(Action<double> report) : IProgress<double>
     {
         public void Report(double value) => report(value);
+    }
+
+    // ======== 独立审查后补充的测试 ========
+
+    [Fact]
+    public async Task Installer_is_told_the_exact_judged_version()   // 审查 #4：锁定判断过的版本
+    {
+        var (executor, installer, _, _) = Make();
+        await Run(executor, Update());
+        Assert.Equal("7.46", Assert.Single(installer.Targets));
+    }
+
+    [Fact]
+    public async Task Version_check_compares_registry_with_registry()   // 审查 #3：winget 3.10.2 vs 注册表 3.10.2150.0
+    {
+        var group = SoftwareGrouper.Group(
+            [Entry("Python 3.10.2 (64-bit)", "Python Software Foundation", "3.10.2150.0", key: "Py")], []).Groups.Single();
+        var update = new JudgedUpdate(
+            new UpdateCandidate("Python.Python.3.10", "Python 3.10", null, "3.10.2", "3.10.11", ["py"]),
+            group, UpdateTier.Low, "小版本更新");
+        var executor = new UpdateExecutor(new FakeInstaller(() => Ok),
+            new FakeVersions(new() { ["Py"] = "3.10.2150.0" }),   // 安装没生效，注册表版本没变
+            new FakeProcesses(), new MemoryHistory());
+
+        var result = await Run(executor, update);
+
+        Assert.Equal(ExecuteOutcome.Failed, result.Outcome);
+        Assert.Equal("安装程序报告成功，但版本没有变化（仍是 3.10.2150.0）", result.Message);
+    }
+
+    [Fact]
+    public async Task Success_message_uses_registry_versions()
+    {
+        var group = SoftwareGrouper.Group(
+            [Entry("Python 3.10.2 (64-bit)", "Python Software Foundation", "3.10.2150.0", key: "Py")], []).Groups.Single();
+        var update = new JudgedUpdate(
+            new UpdateCandidate("Python.Python.3.10", "Python 3.10", null, "3.10.2", "3.10.11", ["py"]),
+            group, UpdateTier.Low, "小版本更新");
+        var executor = new UpdateExecutor(new FakeInstaller(() => Ok),
+            new FakeVersions(new() { ["Py"] = "3.10.11150.0" }), new FakeProcesses(), new MemoryHistory());
+
+        var result = await Run(executor, update);
+
+        Assert.Equal(ExecuteOutcome.Succeeded, result.Outcome);
+        Assert.Equal("已从 3.10.2150.0 更新到 3.10.11150.0", result.Message);
+    }
+
+    private static JudgedUpdate UpdateWithoutLocation()
+    {
+        var group = SoftwareGrouper.Group(
+            [Entry("Node.js", "Node.js Foundation", "24.11.1", key: "{NODE}")], []).Groups.Single();
+        return new JudgedUpdate(new UpdateCandidate("OpenJS.NodeJS", "Node.js", null, "24.11.1", "24.12.0", ["{node}"]),
+            group, UpdateTier.Low, "小版本更新");
+    }
+
+    [Fact]
+    public async Task Automatic_mode_refuses_when_running_state_cannot_be_checked()   // 审查 #1
+    {
+        var (executor, installer, _, _) = Make();
+        var result = await Run(executor, UpdateWithoutLocation(), automatic: true);
+
+        Assert.Equal(ExecuteOutcome.Refused, result.Outcome);
+        Assert.Equal("无法确定 Node.js 的安装位置，不能确认它是否在运行，自动更新跳过", result.Message);
+        Assert.Empty(installer.Calls);
+    }
+
+    [Fact]
+    public async Task Manual_mode_proceeds_when_running_state_cannot_be_checked()
+    {
+        var installer = new FakeInstaller(() => Ok);
+        var executor = new UpdateExecutor(installer, new FakeVersions(new() { ["{NODE}"] = "24.12.0" }),
+            new FakeProcesses(), new MemoryHistory());
+
+        var result = await Run(executor, UpdateWithoutLocation());
+
+        Assert.Equal(ExecuteOutcome.Succeeded, result.Outcome);
+        Assert.Single(installer.Calls);
+    }
+
+    [Fact]
+    public void Can_check_running_state_reports_unknown_locations()
+    {
+        Assert.False(UpdateExecutor.CanCheckRunningState(UpdateWithoutLocation()));
+        Assert.True(UpdateExecutor.CanCheckRunningState(Update()));
+    }
+
+    [Fact]
+    public async Task Background_program_directories_are_also_checked()   // 审查 #1：用后台项目的程序路径补充
+    {
+        var service = new BackgroundItem(BackgroundKind.Service, "node-svc", null, null, @"C:\Tools\node\svc.exe", null);
+        var processes = new FakeProcesses();
+        var executor = new UpdateExecutor(new FakeInstaller(() => Ok), new FakeVersions(new()), processes, new MemoryHistory());
+        var update = UpdateWithoutLocation();
+        update.Group!.Background.Add(service);
+
+        var result = await Run(executor, update, automatic: true);
+
+        Assert.NotEqual(ExecuteOutcome.Refused, result.Outcome);
+        Assert.Equal(new[] { @"C:\Tools\node" }, Assert.Single(processes.Asked));
+    }
+
+    [Fact]
+    public async Task History_write_failure_does_not_throw()   // 审查 #2
+    {
+        var executor = new UpdateExecutor(new FakeInstaller(() => Ok), new FakeVersions(new() { ["Bandizip"] = "7.46" }),
+            new FakeProcesses(), new BrokenHistory(failRead: false, failWrite: true));
+
+        var result = await Run(executor, Update());
+
+        Assert.Equal(ExecuteOutcome.Succeeded, result.Outcome);
+        Assert.Equal("已从 7.30 更新到 7.46（更新历史写入失败：文件被另一个进程占用）", result.Message);
+    }
+
+    [Fact]
+    public async Task History_read_failure_in_automatic_mode_refuses()   // 审查 #2
+    {
+        var installer = new FakeInstaller(() => Ok);
+        var executor = new UpdateExecutor(installer, new FakeVersions(new()), new FakeProcesses(),
+            new BrokenHistory(failRead: true, failWrite: false));
+
+        var result = await Run(executor, Update(), automatic: true);
+
+        Assert.Equal(ExecuteOutcome.Refused, result.Outcome);
+        Assert.Equal("无法读取更新历史（拒绝访问），自动更新跳过", result.Message);
+        Assert.Empty(installer.Calls);
     }
 }
