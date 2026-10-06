@@ -6,6 +6,7 @@ using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Scanning;
+using UpdateHelper.Core.Security;
 using UpdateHelper.Core.Updates;
 using UpdateHelper.Winget;
 
@@ -65,7 +66,7 @@ if (showUpdates)
 {
     Console.WriteLine();
     Console.WriteLine("正在向 winget 查询可用更新（只查询，不安装）……");
-    var updates = UpdateService.Check(new WingetUpdateSource(), r, rules);
+    var updates = UpdateService.Check(UpdateSources(), r, rules);
     if (updates.Warning is not null) Console.WriteLine($"警告：{updates.Warning}");
 
     foreach (var tier in updates.Updates.GroupBy(u => u.Tier))
@@ -81,11 +82,14 @@ if (showUpdates)
     }
 }
 
+// winget 放前面：同一个软件两个来源都有更新时以 winget 为准
+IReadOnlyList<IUpdateSource> UpdateSources() => [new WingetUpdateSource(), new RuleUpdateSource(r, rules)];
+
 if (installId is not null)
 {
     Console.WriteLine();
     Console.WriteLine($"准备更新 {installId}，正在查询……");
-    var check = UpdateService.Check(new WingetUpdateSource(), r, rules);
+    var check = UpdateService.Check(UpdateSources(), r, rules);
     if (check.Warning is not null) Console.WriteLine($"警告：{check.Warning}");
 
     var target = check.Updates.FirstOrDefault(u =>
@@ -115,7 +119,10 @@ if (installId is not null)
     using var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };   // Ctrl+C 取消
 
-    var executor = new UpdateExecutor(new WingetInstaller(), new RegistryVersionProbe(), new RunningProcessProbe(),
+    var installer = new InstallerRouter(new WingetInstaller(),
+        new RuleInstaller(rules, new HttpDownloader(), new AuthenticodeVerifier(), new ProcessRunner(),
+            RuleInstaller.DefaultDownloadDirectory));
+    var executor = new UpdateExecutor(installer, new RegistryVersionProbe(), new RunningProcessProbe(),
         new JsonLinesUpdateHistory(JsonLinesUpdateHistory.DefaultPath));
     var lastPercent = -1;
     var progress = new Progress<double>(p =>
