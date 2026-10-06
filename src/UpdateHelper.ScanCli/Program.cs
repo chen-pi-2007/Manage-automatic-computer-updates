@@ -5,15 +5,19 @@ using System.Text.Json.Serialization;
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Scanning;
+using UpdateHelper.Core.Updates;
+using UpdateHelper.Winget;
 
 // 用法：
 //   dotnet run --project src/UpdateHelper.ScanCli                     只列普通软件和开发工具
 //   dotnet run --project src/UpdateHelper.ScanCli -- --all            列出全部分类
 //   dotnet run --project src/UpdateHelper.ScanCli -- --rules <目录>   指定规则目录（默认找仓库里的 rules/）
 //   dotnet run --project src/UpdateHelper.ScanCli -- --json scan.json 另存完整结果
+//   dotnet run --project src/UpdateHelper.ScanCli -- --updates        查询 winget 并列出更新（只查询，不安装）
 Console.OutputEncoding = Encoding.UTF8;
 
 var showAll = args.Contains("--all");
+var showUpdates = args.Contains("--updates");
 var jsonPath = ArgValue("--json");
 var rulesDir = ArgValue("--rules") ?? FindRepoRules();
 
@@ -52,6 +56,26 @@ foreach (var g in visible)
 Console.WriteLine();
 Console.WriteLine("未归属的后台项目：");
 foreach (var b in r.UnassignedBackground) Console.WriteLine($"  [{b.Kind}] {b.Name}  {b.ExecutablePath}{Explain(b)}");
+
+if (showUpdates)
+{
+    Console.WriteLine();
+    Console.WriteLine("正在向 winget 查询可用更新（只查询，不安装）……");
+    var updates = UpdateService.Check(new WingetUpdateSource(), r, rules);
+    if (updates.Warning is not null) Console.WriteLine($"警告：{updates.Warning}");
+
+    foreach (var tier in updates.Updates.GroupBy(u => u.Tier))
+    {
+        Console.WriteLine();
+        Console.WriteLine($"【{TierName(tier.Key)}】{tier.Count()} 个");
+        foreach (var u in tier)
+        {
+            var name = u.Group?.Name ?? u.Candidate.Name;
+            Console.WriteLine($"  {name}  {u.Candidate.InstalledVersion} → {u.Candidate.AvailableVersion}  ({u.Candidate.PackageId})");
+            Console.WriteLine($"      {u.Reason}");
+        }
+    }
+}
 
 if (jsonPath is not null)
 {
@@ -94,3 +118,11 @@ static string? FindRepoRules()
     }
     return null;
 }
+
+static string TierName(UpdateTier tier) => tier switch
+{
+    UpdateTier.Low => "低风险",
+    UpdateTier.Careful => "需确认",
+    UpdateTier.NeverAuto => "不自动",
+    _ => "不管",
+};

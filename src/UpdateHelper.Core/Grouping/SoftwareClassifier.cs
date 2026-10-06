@@ -24,7 +24,8 @@ public static partial class SoftwareClassifier
         return GameLocationPattern().IsMatch(loc);
     }
 
-    [GeneratedRegex(@"\\steamapps\\common\\|\\Epic Games\\|\\WeGameApps\\|\\Ubisoft Game Launcher\\games\\", RegexOptions.IgnoreCase)]
+    // 必须是游戏库下面的子文件夹；库的根目录本身（如 Epic 启动器装在 D:\Epic Games\）不算游戏
+    [GeneratedRegex(@"\\(steamapps\\common|Epic Games|WeGameApps|Ubisoft Game Launcher\\games)\\[^\\]+", RegexOptions.IgnoreCase)]
     private static partial Regex GameLocationPattern();
 
     [GeneratedRegex(@"Visual C\+\+.*Redistributable|\.NET.*Runtime|Desktop Runtime|^Java \d+ Update|WebView2 Runtime|WindowsAppRuntime|PhysX|DirectX", RegexOptions.IgnoreCase)]

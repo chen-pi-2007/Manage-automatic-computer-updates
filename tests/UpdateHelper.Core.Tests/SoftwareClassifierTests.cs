@@ -33,6 +33,14 @@ public class SoftwareClassifierTests
     public void Games_by_install_location(string location)
         => Assert.Equal(SoftwareCategory.Game, SoftwareClassifier.Classify(Entry("某游戏", location: location)));
 
+    [Theory]   // 真实情况：Epic 启动器的安装位置就是游戏库的根目录 D:\Epic Games\
+    [InlineData(@"D:\Epic Games\")]
+    [InlineData(@"D:\Epic Games")]
+    [InlineData(@"D:\SteamLibrary\steamapps\common\")]
+    public void Game_library_root_itself_is_not_a_game(string location)
+        => Assert.Equal(SoftwareCategory.Application,
+            SoftwareClassifier.Classify(Entry("Epic Games Launcher", location: location)));
+
     [Fact]
     public void Epic_launcher_itself_is_not_a_game()
         => Assert.Equal(SoftwareCategory.Application,
