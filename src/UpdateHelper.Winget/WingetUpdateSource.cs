@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Microsoft.Management.Deployment;
 using UpdateHelper.Core.Updates;
 
@@ -15,27 +14,10 @@ public sealed class WingetUpdateSource : IUpdateSource
 
     public IReadOnlyList<UpdateCandidate> GetAvailableUpdates()
     {
-        PackageManager manager;
-        try
-        {
-            manager = new PackageManager();
-        }
-        catch (Exception ex) when (ex is COMException or TypeInitializationException or DllNotFoundException
-                                       or FileNotFoundException or InvalidCastException)
-        {
-            throw new WingetUnavailableException(
-                "没有找到可用的 winget（Windows 程序包管理器）。可以在微软商店安装或更新“应用安装程序”后再试。", ex);
-        }
+        var manager = WingetSession.CreateManager();
+        var catalog = WingetSession.ConnectInstalledAndRemote(manager);
 
-        var options = new CreateCompositePackageCatalogOptions();
-        options.Catalogs.Add(manager.GetPredefinedPackageCatalog(PredefinedPackageCatalog.OpenWindowsCatalog));
-        options.CompositeSearchBehavior = CompositeSearchBehavior.LocalCatalogs;
-
-        var connect = manager.CreateCompositePackageCatalog(options).Connect();
-        if (connect.Status != ConnectResultStatus.Ok)
-            throw new WingetUnavailableException($"无法连接 winget 软件源（{connect.Status}），请检查网络后重试。");
-
-        var found = connect.PackageCatalog.FindPackages(new FindPackagesOptions());
+        var found = catalog.FindPackages(new FindPackagesOptions());
         if (found.Status != FindPackagesResultStatus.Ok)
             throw new WingetUnavailableException($"winget 查询已装软件失败（{found.Status}）。");
 
