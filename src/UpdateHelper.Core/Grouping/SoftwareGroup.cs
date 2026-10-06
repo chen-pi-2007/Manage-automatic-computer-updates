@@ -8,7 +8,11 @@ public sealed class SoftwareGroup
     public required string Name { get; init; }
     public string? Publisher { get; init; }
     public string? Version { get; init; }
-    public SoftwareCategory Category { get; init; }
+    /// <summary>分类。先由内置规则判断，命中 YAML 规则且规则写了 category 时被覆盖。</summary>
+    public SoftwareCategory Category { get; set; }
+
+    /// <summary>命中的 YAML 规则 id；没有命中为 null。</summary>
+    public string? RuleId { get; set; }
 
     /// <summary>主条目；"组件合集"没有主条目。</summary>
     public UninstallEntry? Primary { get; init; }
