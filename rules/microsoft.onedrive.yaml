@@ -1,0 +1,12 @@
+id: microsoft.onedrive
+name: Microsoft OneDrive
+match:
+  displayName: "Microsoft OneDrive"
+  publisher: "Microsoft Corporation"
+background:
+  - run: "OneDrive"
+    explain: "OneDrive 开机自启，在后台同步文件"
+  - task: "OneDrive*"
+    explain: "OneDrive 的定时任务（更新、启动、使用情况报告）"
+  - service: "OneDrive Updater Service"
+    explain: "OneDrive 的更新服务"

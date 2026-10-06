@@ -1,0 +1,9 @@
+id: bytedance.douyin
+name: 抖音
+match:
+  displayName: "抖音"
+background:
+  - task: "LaunchDouyinGuard"
+    explain: "抖音的守护程序启动任务，登录后保持运行"
+  - service: "DouyinElevationService"
+    explain: "抖音需要管理员权限时调用的辅助服务，平时不运行"

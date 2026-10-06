@@ -1,0 +1,8 @@
+id: tencent.meeting
+name: 腾讯会议
+match:
+  displayName: "腾讯会议"
+  publisher: "腾讯科技*"
+background:
+  - service: "WemeetUpdateSvc"
+    explain: "腾讯会议的更新服务"

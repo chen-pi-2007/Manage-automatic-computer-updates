@@ -1,0 +1,8 @@
+id: valve.steam
+name: Steam
+match:
+  displayName: "Steam"
+  publisher: "Valve Corporation"
+background:
+  - service: "Steam Client Service"
+    explain: "Steam 安装和更新游戏时使用的服务，平时不运行"

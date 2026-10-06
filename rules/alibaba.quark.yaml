@@ -1,0 +1,7 @@
+id: alibaba.quark
+name: 夸克
+match:
+  displayName: "夸克"
+background:
+  - service: "QuarkUpdater*"
+    explain: "夸克的自动更新服务"

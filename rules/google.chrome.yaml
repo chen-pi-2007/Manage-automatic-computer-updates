@@ -1,0 +1,14 @@
+id: google.chrome
+name: Google Chrome
+match:
+  displayName: "Google Chrome"
+  publisher: "Google LLC"
+background:
+  - service: "gupdate*"
+    explain: "Google 的自动更新服务（旧版更新程序）"
+  - service: "GoogleUpdater*"
+    explain: "Google 的自动更新服务，定期检查 Chrome 等 Google 软件的新版本"
+  - service: "GoogleChromeElevationService"
+    explain: "Chrome 需要管理员权限时调用的辅助服务，平时不运行"
+  - task: "RunPlatformExperienceHelper*"
+    explain: "Google 平台体验辅助程序的定时任务（解锁时、每天运行）"

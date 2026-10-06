@@ -1,0 +1,10 @@
+id: microsoft.edge
+name: Microsoft Edge
+match:
+  displayName: "Microsoft Edge"
+  publisher: "Microsoft Corporation"
+background:
+  - service: "edgeupdate*"
+    explain: "Edge 的自动更新服务"
+  - service: "MicrosoftEdgeElevationService"
+    explain: "Edge 需要管理员权限时调用的辅助服务，平时不运行"

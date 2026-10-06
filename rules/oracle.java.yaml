@@ -1,0 +1,9 @@
+id: oracle.java
+name: Java（Oracle）
+category: runtime
+match:
+  displayName: "Java * Update *"
+  publisher: "Oracle Corporation"
+background:
+  - run: "SunJavaUpdateSched"
+    explain: "Java 的更新检查程序，开机启动"

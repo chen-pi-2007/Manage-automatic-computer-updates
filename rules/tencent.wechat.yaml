@@ -1,0 +1,10 @@
+id: tencent.wechat
+name: 微信
+match:
+  displayName: "微信"
+  publisher: "腾讯科技*"
+background:
+  - run: "Weixin"
+    explain: "微信开机自启"
+  - startup: "微信*"
+    explain: "微信放在启动文件夹里的开机快捷方式"

@@ -1,0 +1,9 @@
+id: baidu.netdisk
+name: 百度网盘
+match:
+  displayName: "百度网盘"
+background:
+  - run: "BaiduYunDetect"
+    explain: "百度网盘的检测程序，开机启动"
+  - service: "BaiduNetdiskUtility"
+    explain: "百度网盘的辅助服务"

@@ -1,0 +1,12 @@
+id: kingsoft.wps
+name: WPS Office
+match:
+  displayName: "WPS Office*"
+  publisher: "Kingsoft Corp."
+background:
+  - task: "WpsUpdate*"
+    explain: "WPS 的自动更新任务，登录时和每天运行"
+  - task: "WpsWakeWns*"
+    explain: "WPS 的消息推送任务，登录时运行"
+  - service: "wpscloudsvr"
+    explain: "WPS 的云文档服务"

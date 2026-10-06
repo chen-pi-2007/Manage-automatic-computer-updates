@@ -1,0 +1,10 @@
+id: tencent.qq
+name: QQ
+match:
+  displayName: "QQ"
+  publisher: "腾讯科技*"
+background:
+  - run: "QQNT"
+    explain: "QQ 开机自启（后台启动，不弹窗口）"
+  - startup: "QQ"
+    explain: "QQ 放在启动文件夹里的开机快捷方式"
