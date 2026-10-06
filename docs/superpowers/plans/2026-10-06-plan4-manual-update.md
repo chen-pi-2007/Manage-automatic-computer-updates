@@ -68,7 +68,6 @@ src/UpdateHelper.Core/Install/
 src/UpdateHelper.Winget/
   WingetSession.cs           （新）查询和安装共用的连接代码
   WingetUpdateSource.cs      （修改）改用 WingetSession
-src/UpdateHelper.Winget/
   WingetInstaller.cs         通过 UpgradePackageAsync 静默升级
 src/UpdateHelper.ScanCli/Program.cs   （修改）加 --install <包 id> 和 --yes
 tests/UpdateHelper.Core.Tests/
