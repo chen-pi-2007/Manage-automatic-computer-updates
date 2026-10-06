@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using UpdateHelper.Core.Grouping;
+using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Scanning;
 using UpdateHelper.Core.Updates;
@@ -14,10 +15,13 @@ using UpdateHelper.Winget;
 //   dotnet run --project src/UpdateHelper.ScanCli -- --rules <目录>   指定规则目录（默认找仓库里的 rules/）
 //   dotnet run --project src/UpdateHelper.ScanCli -- --json scan.json 另存完整结果
 //   dotnet run --project src/UpdateHelper.ScanCli -- --updates        查询 winget 并列出更新（只查询，不安装）
+//   dotnet run --project src/UpdateHelper.ScanCli -- --install <包 id>  更新一个软件（会先询问；加 --yes 跳过询问）
 Console.OutputEncoding = Encoding.UTF8;
 
 var showAll = args.Contains("--all");
 var showUpdates = args.Contains("--updates");
+var installId = ArgValue("--install");
+var assumeYes = args.Contains("--yes");
 var jsonPath = ArgValue("--json");
 var rulesDir = ArgValue("--rules") ?? FindRepoRules();
 
@@ -75,6 +79,53 @@ if (showUpdates)
             Console.WriteLine($"      {u.Reason}");
         }
     }
+}
+
+if (installId is not null)
+{
+    Console.WriteLine();
+    Console.WriteLine($"准备更新 {installId}，正在查询……");
+    var check = UpdateService.Check(new WingetUpdateSource(), r, rules);
+    if (check.Warning is not null) Console.WriteLine($"警告：{check.Warning}");
+
+    var target = check.Updates.FirstOrDefault(u =>
+        string.Equals(u.Candidate.PackageId, installId, StringComparison.OrdinalIgnoreCase));
+    if (target is null)
+    {
+        Console.WriteLine($"没有找到 {installId} 的可用更新。可以先用 --updates 查看可更新的包 id。");
+        return;
+    }
+
+    var name = target.Group?.Name ?? target.Candidate.Name;
+    Console.WriteLine($"{name}：{target.Candidate.InstalledVersion} → {target.Candidate.AvailableVersion}");
+    Console.WriteLine($"判断：【{TierName(target.Tier)}】{target.Reason}");
+
+    if (!assumeYes)
+    {
+        Console.Write("确定要更新吗？输入 y 并回车继续，其他任意键取消：");
+        if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("已取消，没有做任何改动。");
+            return;
+        }
+    }
+
+    using var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };   // Ctrl+C 取消
+
+    var executor = new UpdateExecutor(new WingetInstaller(), new RegistryVersionProbe(), new RunningProcessProbe(),
+        new JsonLinesUpdateHistory(JsonLinesUpdateHistory.DefaultPath));
+    var lastPercent = -1;
+    var progress = new Progress<double>(p =>
+    {
+        var percent = (int)(p * 100);
+        if (percent / 10 != lastPercent / 10) Console.WriteLine($"  进度 {percent}%");
+        lastPercent = percent;
+    });
+
+    var result = await executor.ExecuteAsync(target, automatic: false, progress, cts.Token);
+    Console.WriteLine($"结果：{result.Outcome}——{result.Message}");
+    Console.WriteLine($"更新历史：{JsonLinesUpdateHistory.DefaultPath}");
 }
 
 if (jsonPath is not null)
