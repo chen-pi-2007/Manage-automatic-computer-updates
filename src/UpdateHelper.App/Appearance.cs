@@ -24,7 +24,8 @@ public static class Appearance
         if (s.Theme == ThemeChoice.System)
         {
             ApplicationThemeManager.ApplySystemTheme(updateAccent: false);
-            if (!_watching && window.IsLoaded) { SystemThemeWatcher.Watch(window, backdrop, updateAccents: s.AccentColor is null); _watching = true; }
+            // 监听时不让它改强调色：用户选了自定义颜色，系统切深浅色时不能被换回系统色
+            if (!_watching && window.IsLoaded) { SystemThemeWatcher.Watch(window, backdrop, updateAccents: false); _watching = true; }
         }
         else
         {
