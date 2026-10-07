@@ -59,6 +59,90 @@
                 <ui:ToggleSwitch IsChecked="{Binding TrayEnabled}" />
             </ui:CardControl>
 
+            <TextBlock Text="外观" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,8" />
+            <ui:CardControl>
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="主题" />
+                        <TextBlock Text="浅色、深色，或跟着 Windows 一起切换" FontSize="12" Opacity="0.7" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ComboBox SelectedIndex="{Binding ThemeIndex}" MinWidth="160">
+                    <ComboBoxItem Content="跟随系统" />
+                    <ComboBoxItem Content="浅色" />
+                    <ComboBoxItem Content="深色" />
+                </ComboBox>
+            </ui:CardControl>
+
+            <ui:CardControl Margin="0,4,0,0">
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="强调色" />
+                        <TextBlock Text="按钮、选中项和图表的颜色" FontSize="12" Opacity="0.7" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ComboBox ItemsSource="{Binding AccentOptions}" SelectedIndex="{Binding AccentIndex}" MinWidth="160">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <Border Width="14" Height="14" CornerRadius="7" Margin="0,0,8,0" VerticalAlignment="Center"
+                                        BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{Binding Color}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Color}" Value="{x:Null}">
+                                                    <Setter Property="Background" Value="{DynamicResource SystemAccentColorPrimaryBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                </Border>
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </ui:CardControl>
+
+            <ui:CardControl Margin="0,4,0,0">
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="窗口背景" />
+                        <TextBlock Text="云母会透出一点桌面颜色；亚克力更通透；纯色最省资源" FontSize="12" Opacity="0.7" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ComboBox SelectedIndex="{Binding BackdropIndex}" MinWidth="160">
+                    <ComboBoxItem Content="云母（Mica）" />
+                    <ComboBoxItem Content="亚克力（半透明）" />
+                    <ComboBoxItem Content="纯色" />
+                </ComboBox>
+            </ui:CardControl>
+
+            <ui:CardControl Margin="0,4,0,0">
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="文字大小" />
+                        <TextBlock Text="列表和按钮上的文字" FontSize="12" Opacity="0.7" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ComboBox SelectedIndex="{Binding TextSizeIndex}" MinWidth="160">
+                    <ComboBoxItem Content="小" />
+                    <ComboBoxItem Content="标准" />
+                    <ComboBoxItem Content="大" />
+                </ComboBox>
+            </ui:CardControl>
+
+            <ui:CardControl Margin="0,4,0,0">
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="紧凑模式" />
+                        <TextBlock Text="表格行更矮，一屏能看到更多软件" FontSize="12" Opacity="0.7" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ui:ToggleSwitch IsChecked="{Binding Compact}" />
+            </ui:CardControl>
+
             <TextBlock Text="{Binding SaveError}" Foreground="#C42B1C" Margin="0,12,0,0" TextWrapping="Wrap" />
         </StackPanel>
     </ScrollViewer>

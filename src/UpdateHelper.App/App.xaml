@@ -1,7 +1,8 @@
-<Application x:Class="UpdateHelper.App.App"
+﻿<Application x:Class="UpdateHelper.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:sys="clr-namespace:System;assembly=System.Runtime"
              ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
         <ResourceDictionary>
@@ -9,6 +10,8 @@
                 <ui:ThemesDictionary Theme="Light" />
                 <ui:ControlsDictionary />
             </ResourceDictionary.MergedDictionaries>
+            <!-- 表格行高：标准模式 NaN（按内容自动），紧凑模式由 Appearance 改小 -->
+            <sys:Double x:Key="UhRowHeight">NaN</sys:Double>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

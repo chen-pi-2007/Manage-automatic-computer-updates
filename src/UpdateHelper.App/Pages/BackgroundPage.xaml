@@ -1,4 +1,4 @@
-<Page x:Class="UpdateHelper.App.Pages.BackgroundPage"
+﻿<Page x:Class="UpdateHelper.App.Pages.BackgroundPage"
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml" Title="后台项目"
@@ -14,7 +14,7 @@
             <Run Text="{Binding CountText, Mode=OneWay}" />
             <Run Text="  ·  服务、开机自启和计划任务，目前只能查看" />
         </TextBlock>
-        <ui:DataGrid Grid.Row="2" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False"
+        <ui:DataGrid Grid.Row="2" ItemsSource="{Binding Rows}" RowHeight="{DynamicResource UhRowHeight}" AutoGenerateColumns="False" CanUserAddRows="False"
                      HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="True">
             <ui:DataGrid.Columns>
                 <DataGridTextColumn Header="类型" Binding="{Binding Kind}" Width="90" />

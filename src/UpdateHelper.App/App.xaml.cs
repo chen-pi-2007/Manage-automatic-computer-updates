@@ -46,7 +46,6 @@ public partial class App : Application
                 Dispatcher.Invoke(() => ShowWindow(null));
         }) { IsBackground = true }.Start();
 
-        ApplicationThemeManager.ApplySystemTheme();
         AppHost.Initialize();
 
         _tray = new TrayIcon { Visible = AppHost.Settings.Current.TrayEnabled };
@@ -61,6 +60,10 @@ public partial class App : Application
 
         _window = new MainWindow();
         _window.Closing += OnWindowClosing;
+        // 外观：现在先应用一次；窗口加载后再应用一次（跟随系统主题的监听需要窗口句柄）；设置改了随时应用
+        Appearance.Apply(AppHost.Settings.Current, _window);
+        _window.Loaded += (_, _) => Appearance.Apply(AppHost.Settings.Current, _window);
+        AppHost.Settings.PropertyChanged += (_, _) => Appearance.Apply(AppHost.Settings.Current, _window);
 
         var pageIndex = Array.IndexOf(e.Args, "--page");
         Type? startPage = pageIndex >= 0 && pageIndex + 1 < e.Args.Length && PageTypes.TryGetValue(e.Args[pageIndex + 1], out var p)

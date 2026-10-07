@@ -13,7 +13,16 @@ public enum UpdateMode
     OnOpenOnly,
 }
 
-/// <summary>用户设置。默认值来自 spec 第 6、18 节。</summary>
+/// <summary>主题：跟随系统 / 浅色 / 深色。</summary>
+public enum ThemeChoice { System, Light, Dark }
+
+/// <summary>窗口背景材质：云母 / 亚克力（半透明）/ 纯色。</summary>
+public enum BackdropChoice { Mica, Acrylic, Solid }
+
+/// <summary>文字大小。</summary>
+public enum TextSize { Small, Standard, Large }
+
+/// <summary>用户设置。默认值来自 spec 第 6、18 节；外观默认跟随系统。</summary>
 public sealed record AppSettings
 {
     public const int MaxObservationDays = 30;
@@ -25,11 +34,26 @@ public sealed record AppSettings
     public int CheckIntervalHours { get; init; } = 24;
     public bool TrayEnabled { get; init; } = true;
 
-    /// <summary>把越界的数值限制到范围内，未定义的模式换成默认。</summary>
+    public ThemeChoice Theme { get; init; } = ThemeChoice.System;
+    /// <summary>强调色，形如 #RRGGBB；null 表示跟随系统。</summary>
+    public string? AccentColor { get; init; }
+    public BackdropChoice Backdrop { get; init; } = BackdropChoice.Mica;
+    public TextSize TextSize { get; init; } = TextSize.Standard;
+    /// <summary>紧凑模式：表格行更矮，一屏能看到更多软件。</summary>
+    public bool Compact { get; init; }
+
+    /// <summary>把越界的数值限制到范围内，未定义的选项和格式不对的颜色换成默认。</summary>
     public AppSettings Normalized() => this with
     {
         Mode = Enum.IsDefined(Mode) ? Mode : UpdateMode.NotifyOnly,
         ObservationDays = Math.Clamp(ObservationDays, 0, MaxObservationDays),
         CheckIntervalHours = Math.Clamp(CheckIntervalHours, MinCheckIntervalHours, MaxCheckIntervalHours),
+        Theme = Enum.IsDefined(Theme) ? Theme : ThemeChoice.System,
+        AccentColor = IsHexColor(AccentColor) ? AccentColor!.ToUpperInvariant() : null,
+        Backdrop = Enum.IsDefined(Backdrop) ? Backdrop : BackdropChoice.Mica,
+        TextSize = Enum.IsDefined(TextSize) ? TextSize : TextSize.Standard,
     };
+
+    private static bool IsHexColor(string? s) =>
+        s is { Length: 7 } && s[0] == '#' && s.Skip(1).All(Uri.IsHexDigit);
 }

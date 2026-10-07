@@ -1,4 +1,4 @@
-<Page x:Class="UpdateHelper.App.Pages.SoftwarePage"
+﻿<Page x:Class="UpdateHelper.App.Pages.SoftwarePage"
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml" Title="我的软件"
@@ -18,7 +18,7 @@
             <ui:Button Content="卸载" IsEnabled="False" Margin="16,0,0,0" ToolTipService.ShowOnDisabled="True"
                        ToolTip="卸载功能将在后续版本提供" />
         </StackPanel>
-        <ui:DataGrid Grid.Row="2" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False"
+        <ui:DataGrid Grid.Row="2" ItemsSource="{Binding Rows}" RowHeight="{DynamicResource UhRowHeight}" AutoGenerateColumns="False" CanUserAddRows="False"
                      HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="True">
             <ui:DataGrid.Columns>
                 <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="2*" />
