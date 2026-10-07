@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/UpdateHelper.Core/UpdateHelper.Core.csproj" />
+    <Project Path="src/UpdateHelper.Presentation/UpdateHelper.Presentation.csproj" />
     <Project Path="src/UpdateHelper.ScanCli/UpdateHelper.ScanCli.csproj" />
     <Project Path="src/UpdateHelper.Winget/UpdateHelper.Winget.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/UpdateHelper.Core.Tests/UpdateHelper.Core.Tests.csproj" />
+    <Project Path="tests/UpdateHelper.Presentation.Tests/UpdateHelper.Presentation.Tests.csproj" />
   </Folder>
 </Solution>
