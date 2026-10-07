@@ -52,6 +52,26 @@ public sealed partial class HomeViewModel : ObservableObject
 
     public string? Warning => _state.Warning;
 
+    // —— 图表 ——
+
+    /// <summary>更新按风险分布的环形图；"不管"档不画。</summary>
+    public IReadOnlyList<ChartSlice> TierSlices => Charts.Donut(
+    [
+        (Display.TierName(UpdateTier.Low), Visible.Count(u => u.Tier == UpdateTier.Low), "#3FA34D"),
+        (Display.TierName(UpdateTier.Careful), Visible.Count(u => u.Tier == UpdateTier.Careful), "#E8A317"),
+        (Display.TierName(UpdateTier.NeverAuto), Visible.Count(u => u.Tier == UpdateTier.NeverAuto), "#D9534F"),
+    ]);
+
+    public int TierTotal => Visible.Count();
+
+    /// <summary>软件按分类的条形图，从多到少；组件合集不算。</summary>
+    public IReadOnlyList<ChartBar> CategoryBars => Charts.Bars(
+        (_state.Snapshot?.Result.Groups ?? [])
+            .Where(g => g.Primary is not null)
+            .GroupBy(g => g.Category)
+            .Select(g => (Display.CategoryName(g.Key), g.Count()))
+            .OrderByDescending(x => x.Item2));
+
     public int ModeIndex
     {
         get => (int)_settings.Current.Mode;
@@ -70,6 +90,9 @@ public sealed partial class HomeViewModel : ObservableObject
         OnPropertyChanged(nameof(LastCheckedText));
         OnPropertyChanged(nameof(SoftwareCountText));
         OnPropertyChanged(nameof(Warning));
+        OnPropertyChanged(nameof(TierSlices));
+        OnPropertyChanged(nameof(TierTotal));
+        OnPropertyChanged(nameof(CategoryBars));
         if (e.PropertyName == nameof(AppState.IsBusy)) CheckNowCommand.NotifyCanExecuteChanged();
     }
 }
