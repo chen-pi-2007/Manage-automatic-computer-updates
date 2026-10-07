@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/UpdateHelper.App/UpdateHelper.App.csproj" />
     <Project Path="src/UpdateHelper.Core/UpdateHelper.Core.csproj" />
     <Project Path="src/UpdateHelper.Presentation/UpdateHelper.Presentation.csproj" />
     <Project Path="src/UpdateHelper.ScanCli/UpdateHelper.ScanCli.csproj" />

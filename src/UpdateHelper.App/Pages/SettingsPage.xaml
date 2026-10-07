@@ -1,0 +1,65 @@
+<Page x:Class="UpdateHelper.App.Pages.SettingsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml" Title="设置"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24,8,40,24">
+            <TextBlock Text="设置" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,16" />
+            <ui:InfoBar Title="提示" Message="{Binding AutoUpdateNote}" IsOpen="True" IsClosable="False" Severity="Informational" />
+
+            <ui:CardControl Header="更新模式" Margin="0,16,0,0">
+                <ComboBox SelectedIndex="{Binding ModeIndex}" MinWidth="160">
+                    <ComboBoxItem Content="只提醒" />
+                    <ComboBoxItem Content="分级自动" />
+                    <ComboBoxItem Content="全部自动" />
+                    <ComboBoxItem Content="打开才检查" />
+                </ComboBox>
+            </ui:CardControl>
+
+            <ui:CardControl Margin="0,4,0,0">
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="观察期" />
+                        <TextBlock Text="新版本发布后先等几天，再自动安装（只在自动模式下生效）" FontSize="12" Opacity="0.7" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <StackPanel Orientation="Horizontal">
+                    <Slider Minimum="0" Maximum="30" Width="200" IsSnapToTickEnabled="True" TickFrequency="1"
+                            Value="{Binding ObservationDays}" VerticalAlignment="Center" />
+                    <TextBlock Width="56" Margin="12,0,0,0" VerticalAlignment="Center">
+                        <Run Text="{Binding ObservationDays, Mode=OneWay}" /><Run Text=" 天" />
+                    </TextBlock>
+                </StackPanel>
+            </ui:CardControl>
+
+            <ui:CardControl Margin="0,4,0,0">
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="检查间隔" />
+                        <TextBlock Text="电脑一直开着时，多久再检查一次" FontSize="12" Opacity="0.7" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <StackPanel Orientation="Horizontal">
+                    <Slider Minimum="1" Maximum="168" Width="200" IsSnapToTickEnabled="True" TickFrequency="1"
+                            Value="{Binding CheckIntervalHours}" VerticalAlignment="Center" />
+                    <TextBlock Width="56" Margin="12,0,0,0" VerticalAlignment="Center">
+                        <Run Text="{Binding CheckIntervalHours, Mode=OneWay}" /><Run Text=" 小时" />
+                    </TextBlock>
+                </StackPanel>
+            </ui:CardControl>
+
+            <ui:CardControl Margin="0,4,0,0">
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="托盘图标" />
+                        <TextBlock Text="关闭窗口时缩到右下角，而不是退出" FontSize="12" Opacity="0.7" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ui:ToggleSwitch IsChecked="{Binding TrayEnabled}" />
+            </ui:CardControl>
+
+            <TextBlock Text="{Binding SaveError}" Foreground="#C42B1C" Margin="0,12,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

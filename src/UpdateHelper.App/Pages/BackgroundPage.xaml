@@ -1,0 +1,28 @@
+<Page x:Class="UpdateHelper.App.Pages.BackgroundPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml" Title="后台项目"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+    <Grid Margin="24,8,40,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="后台项目" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,12" />
+        <TextBlock Grid.Row="1" Margin="0,0,0,12" Opacity="0.7">
+            <Run Text="{Binding CountText, Mode=OneWay}" />
+            <Run Text="  ·  服务、开机自启和计划任务，目前只能查看" />
+        </TextBlock>
+        <ui:DataGrid Grid.Row="2" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False"
+                     HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="True">
+            <ui:DataGrid.Columns>
+                <DataGridTextColumn Header="类型" Binding="{Binding Kind}" Width="90" />
+                <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="1.5*" />
+                <DataGridTextColumn Header="归属软件" Binding="{Binding Owner}" Width="1.2*" />
+                <DataGridTextColumn Header="说明" Binding="{Binding Explanation}" Width="2*" />
+                <DataGridTextColumn Header="程序" Binding="{Binding Path}" Width="2*" />
+            </ui:DataGrid.Columns>
+        </ui:DataGrid>
+    </Grid>
+</Page>
