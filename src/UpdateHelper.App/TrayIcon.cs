@@ -18,12 +18,21 @@ public sealed class TrayIcon : IDisposable
 
         _icon = new NotifyIcon
         {
-            Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application,
+            Icon = LoadIcon(),
             Text = "更新管理小助手",
             ContextMenuStrip = menu,
         };
         _icon.DoubleClick += (_, _) => OpenRequested?.Invoke();
         _icon.BalloonTipClicked += (_, _) => OpenUpdatesRequested?.Invoke();
+    }
+
+    /// <summary>从程序资源里取托盘大小的图标（按当前缩放选 16/20/24… 中最合适的一张）。</summary>
+    private static Icon LoadIcon()
+    {
+        var info = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/Assets/app.ico"));
+        if (info is null) return SystemIcons.Application;
+        using var stream = info.Stream;
+        return new Icon(stream, SystemInformation.SmallIconSize);
     }
 
     public event Action? OpenRequested;

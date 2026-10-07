@@ -10,7 +10,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>UpdateHelper</AssemblyName>
     <RootNamespace>UpdateHelper.App</RootNamespace>
+    <!-- 图标由 tools/Make-Icon.ps1 生成 -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+    <Resource Include="Assets\app.png" />
+  </ItemGroup>
 
   <!-- 不去掉的话 Application 等类型在 WPF 和 WinForms 之间冲突（CS0104） -->
   <ItemGroup>

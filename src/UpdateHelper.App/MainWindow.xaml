@@ -4,14 +4,18 @@
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         xmlns:pages="clr-namespace:UpdateHelper.App.Pages"
         Title="更新管理小助手" Width="1180" Height="760" MinWidth="900" MinHeight="560"
-        WindowStartupLocation="CenterScreen"
+        WindowStartupLocation="CenterScreen" Icon="pack://application:,,,/Assets/app.ico"
         ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica" WindowCornerPreference="Round">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <ui:TitleBar Grid.Row="0" Title="更新管理小助手" />
+        <ui:TitleBar Grid.Row="0" Title="更新管理小助手">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon Source="pack://application:,,,/Assets/app.png" />
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
         <ui:NavigationView x:Name="Nav" Grid.Row="1" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed" OpenPaneLength="220">
             <ui:NavigationView.MenuItems>
                 <ui:NavigationViewItem Content="首页" Icon="{ui:SymbolIcon Home24}" TargetPageType="{x:Type pages:HomePage}" />
