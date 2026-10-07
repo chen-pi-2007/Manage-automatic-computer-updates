@@ -137,6 +137,18 @@ public sealed class PageViewModelTests : IDisposable
         Assert.Equal("Python 3.10.2 (64-bit)", Assert.Single(vm.Rows).Name);
     }
 
+    [Fact]
+    public async Task Software_rows_carry_the_registry_icon()
+    {
+        var state = await StateWith(MakeSnapshot([
+            Entry("QQ", "9.9.20", "腾讯", @"C:\Program Files\Tencent\QQNT") with { DisplayIcon = @"C:\Program Files\Tencent\QQNT\QQ.exe,0" },
+            Entry("Git", "2.50.1", "The Git Development Community")]));
+        var vm = new SoftwareViewModel(state);
+
+        Assert.Equal(new IconSource(@"C:\Program Files\Tencent\QQNT\QQ.exe", 0), vm.Rows.Single(r => r.Name == "QQ").Icon);
+        Assert.Null(vm.Rows.Single(r => r.Name == "Git").Icon);   // 没登记图标：界面上用通用图标
+    }
+
     // —— 后台项目 ——
 
     [Fact]
