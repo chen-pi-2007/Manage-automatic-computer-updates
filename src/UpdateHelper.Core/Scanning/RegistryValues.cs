@@ -48,7 +48,8 @@ public static class RegistryValues
                 IsSystemComponent: AsFlag(getValue("SystemComponent")),
                 ParentKeyName: AsString(getValue("ParentKeyName")),
                 ReleaseType: AsString(getValue("ReleaseType")),
-                EstimatedSizeKb: AsLong(getValue("EstimatedSize")));
+                EstimatedSizeKb: AsLong(getValue("EstimatedSize")),
+                DisplayIcon: AsString(getValue("DisplayIcon")));
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or IOException)
         {

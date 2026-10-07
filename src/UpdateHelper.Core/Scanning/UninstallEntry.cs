@@ -24,7 +24,8 @@ public sealed record UninstallEntry(
     bool IsSystemComponent,
     string? ParentKeyName,
     string? ReleaseType,
-    long? EstimatedSizeKb)
+    long? EstimatedSizeKb,
+    string? DisplayIcon = null)
 {
     /// <summary>是不是某个软件的补丁或更新包（不是独立软件）。</summary>
     public bool IsUpdateOrPatch => ParentKeyName is not null || ReleaseType is not null;

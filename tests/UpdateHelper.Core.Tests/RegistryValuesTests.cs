@@ -50,10 +50,12 @@ public class RegistryValuesTests
             ["UninstallString"] = "\"C:\\Program Files\\Tencent\\QQNT\\Uninstall.exe\"",
             ["SystemComponent"] = 0,
             ["EstimatedSize"] = 573440,
+            ["DisplayIcon"] = @"C:\Program Files\Tencent\QQNT\QQ.exe,0",
         }));
 
         Assert.NotNull(e);
         Assert.Equal("QQ", e!.DisplayName);
+        Assert.Equal(@"C:\Program Files\Tencent\QQNT\QQ.exe,0", e.DisplayIcon);
         Assert.Equal("9.9.20.36330", e.DisplayVersion);
         Assert.Equal(@"C:\Program Files\Tencent\QQNT\", e.InstallLocation);
         Assert.False(e.IsSystemComponent);
