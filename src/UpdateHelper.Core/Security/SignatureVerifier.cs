@@ -100,7 +100,7 @@ public sealed class AuthenticodeVerifier : ISignatureVerifier
                 dwUnionChoice = 1,            // WTD_CHOICE_FILE
                 pFile = pFile,
                 dwStateAction = 1,            // WTD_STATEACTION_VERIFY
-                dwProvFlags = 0x80,           // WTD_REVOCATION_CHECK_NONE
+                dwProvFlags = 0x10,           // WTD_REVOCATION_CHECK_NONE（WinTrust.h：0x10；0x80 是"查整条链，根证书除外"）
             };
             var action = GenericVerifyV2;
             var result = (uint)WinVerifyTrust(-1, ref action, ref data);

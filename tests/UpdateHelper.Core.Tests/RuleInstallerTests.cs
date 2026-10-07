@@ -38,12 +38,13 @@ public sealed class RuleInstallerTests : IDisposable
         }
     }
 
-    private sealed class FakeRunner(Func<int>? behave = null) : IProcessRunner
+    private sealed class FakeRunner(Func<int>? behave = null, Action<string, string>? whileRunning = null) : IProcessRunner
     {
         public List<(string File, string Args)> Calls { get; } = [];
         public Task<int> RunAsync(string fileName, string arguments, CancellationToken ct)
         {
             Calls.Add((fileName, arguments));
+            whileRunning?.Invoke(fileName, arguments);
             return Task.FromResult((behave ?? (() => 0))());
         }
     }
@@ -86,7 +87,7 @@ public sealed class RuleInstallerTests : IDisposable
             new FakeDownloader(), new FakeVerifier(true), runner));
 
         var call = Assert.Single(runner.Calls);
-        Assert.Equal("msiexec.exe", call.File);
+        Assert.Equal(Path.Combine(Environment.SystemDirectory, "msiexec.exe"), call.File);
         Assert.Equal($"/i \"{Expected(".msi")}\" /qn /norestart", call.Args);
     }
 
@@ -198,5 +199,40 @@ public sealed class RuleInstallerTests : IDisposable
         var report = await Upgrade(Make(Rules(), new FakeDownloader(), new FakeVerifier(true),
             new FakeRunner(() => throw new Win32Exception(1223))));
         Assert.Equal("没有获得管理员授权（在确认框里点了“否”）", report.ErrorMessage);
+    }
+    // ======== 独立审查后补充的测试 ========
+
+    [Theory]   // 审查 #1：MSI 参数白名单，在下载之前就拒绝
+    [InlineData("/qn TRANSFORMS=\\\\evil\\x.mst", "TRANSFORMS=\\\\evil\\x.mst")]
+    [InlineData("/qn PATCH=x.msp", "PATCH=x.msp")]
+    [InlineData("/x {GUID}", "/x")]
+    public async Task Unsafe_msi_arguments_are_refused_before_downloading(string silentArgs, string offending)
+    {
+        var downloader = new FakeDownloader();
+        var runner = new FakeRunner();
+        var report = await Upgrade(Make(Rules(url: "https://example.com/setup.msi", silentArgs: silentArgs),
+            downloader, new FakeVerifier(true), runner));
+
+        Assert.False(report.Success);
+        Assert.Equal($"规则里的 MSI 安装参数不安全（{offending}），不能安装", report.ErrorMessage);
+        Assert.Empty(downloader.Urls);
+        Assert.Empty(runner.Calls);
+    }
+
+    [Fact]   // 审查 #3：从校验到安装程序结束，安装包被锁住，别的程序改不了、换不了
+    public async Task Installer_file_is_locked_from_verification_until_the_run_ends()
+    {
+        Exception? tamperError = null;
+        var runner = new FakeRunner(whileRunning: (file, _) =>
+        {
+            try { File.WriteAllBytes(file, [6, 6, 6]); }
+            catch (Exception ex) { tamperError = ex; }
+        });
+
+        var report = await Upgrade(Make(Rules(), new FakeDownloader(), new FakeVerifier(true), runner));
+
+        Assert.True(report.Success);
+        Assert.IsAssignableFrom<IOException>(tamperError);
+        Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Expected()));   // 内容没被换掉
     }
 }

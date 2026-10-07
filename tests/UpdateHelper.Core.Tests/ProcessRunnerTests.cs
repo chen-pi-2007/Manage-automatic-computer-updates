@@ -41,4 +41,16 @@ public class ProcessRunnerTests
         Assert.Equal(0, code);
         Assert.True(File.Exists(marker));
     }
+    [Fact]   // 审查 #3 的修复要锁住安装包；锁住（只允许别人读）的文件必须仍能被启动
+    public async Task File_locked_for_reading_can_still_be_executed()
+    {
+        using var dir = new TempDir();
+        var copy = Path.Combine(dir.Path, "setup.exe");
+        File.Copy(Cmd, copy);
+
+        using (new FileStream(copy, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.Equal(7, await new ProcessRunner().RunAsync(copy, "/c exit 7", CancellationToken.None));
+        }
+    }
 }

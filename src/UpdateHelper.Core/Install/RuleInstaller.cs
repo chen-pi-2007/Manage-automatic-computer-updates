@@ -21,6 +21,9 @@ public sealed class RuleInstaller(
 
     private const string NoElevation = "没有获得管理员授权（在确认框里点了“否”）";
 
+    /// <summary>用完整路径：裸文件名会先查当前用户可写的 App Paths 和当前目录，可能被同名程序冒充。</summary>
+    private static readonly string MsiExec = Path.Combine(Environment.SystemDirectory, "msiexec.exe");
+
     public string Name => "规则库";
 
     public async Task<InstallerReport> UpgradeAsync(string packageId, string targetVersion, InstallScopeHint scope,
@@ -38,8 +41,12 @@ public sealed class RuleInstaller(
         if (string.IsNullOrWhiteSpace(rule.Update.Signer)) return Fail("规则没有写签名者，不能安装");
         if (string.IsNullOrWhiteSpace(rule.Update.SilentArgs)) return Fail("规则没有写静默安装参数，不能自动安装");
 
-        // 4～5：下载（取消向外抛，交给 UpdateExecutor 记为"已取消"）
+        // MSI 的参数只放行白名单：TRANSFORMS=、PATCH= 等会让 msiexec 加载没经过签名校验的文件
         var isMsi = new Uri(latest.Url).AbsolutePath.EndsWith(".msi", StringComparison.OrdinalIgnoreCase);
+        if (isMsi && MsiArguments.FindUnsafe(rule.Update.SilentArgs) is { } unsafeArg)
+            return Fail($"规则里的 MSI 安装参数不安全（{unsafeArg}），不能安装");
+
+        // 4～5：下载（取消向外抛，交给 UpdateExecutor 记为"已取消"）
         var file = Path.Combine(downloadDirectory, $"{ruleId}-{SafeName(latest.Version)}{(isMsi ? ".msi" : ".exe")}");
         var downloadProgress = progress is null ? null : new ScaledProgress(progress, 0.5);
         try
@@ -55,27 +62,44 @@ public sealed class RuleInstaller(
             return Fail($"下载失败：{ex.Message}");
         }
 
-        // 6：签名校验不通过 → 删除，绝不运行
-        var check = verifier.Verify(file, rule.Update.Signer);
-        if (!check.Trusted)
-        {
-            TryDelete(file);
-            return Fail($"安装包没有通过签名校验：{check.Message}。文件已删除，没有运行");
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();   // 运行前最后一次响应取消
-
-        // 7～10：运行安装包（启动后不再响应取消）
-        int exitCode;
+        // 从签名校验开始一直到安装程序结束，锁住安装包：别的程序只能读，不能改写、替换或删除，
+        // 避免"校验的是原版、运行的是被换掉的文件"
+        FileStream fileLock;
         try
         {
-            exitCode = isMsi
-                ? await runner.RunAsync("msiexec.exe", $"/i \"{file}\" {rule.Update.SilentArgs}", CancellationToken.None)
-                : await runner.RunAsync(file, rule.Update.SilentArgs, CancellationToken.None);
+            fileLock = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
         }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return Fail(NoElevation);
+            TryDelete(file);
+            return Fail($"无法锁定安装包（{ex.Message}），没有运行");
+        }
+
+        int exitCode;
+        using (fileLock)
+        {
+            // 6：签名校验不通过 → 删除，绝不运行
+            var check = verifier.Verify(file, rule.Update.Signer);
+            if (!check.Trusted)
+            {
+                fileLock.Dispose();
+                TryDelete(file);
+                return Fail($"安装包没有通过签名校验：{check.Message}。文件已删除，没有运行");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();   // 运行前最后一次响应取消
+
+            // 7～10：运行安装包（启动后不再响应取消）
+            try
+            {
+                exitCode = isMsi
+                    ? await runner.RunAsync(MsiExec, $"/i \"{file}\" {rule.Update.SilentArgs}", CancellationToken.None)
+                    : await runner.RunAsync(file, rule.Update.SilentArgs, CancellationToken.None);
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                return Fail(NoElevation);
+            }
         }
         progress?.Report(1.0);
 
