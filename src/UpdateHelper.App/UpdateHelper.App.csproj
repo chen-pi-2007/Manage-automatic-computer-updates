@@ -12,6 +12,8 @@
     <RootNamespace>UpdateHelper.App</RootNamespace>
     <!-- 图标由 tools/Make-Icon.ps1 生成 -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
+    <Product>更新管理小助手</Product>
   </PropertyGroup>
 
   <ItemGroup>
