@@ -91,4 +91,49 @@ public sealed class AgentInstallerTests
         stop.Cancel();
         await running;
     }
+
+    [Fact]
+    public async Task AgentInstaller_does_not_resend_after_request_was_sent()
+    {
+        var pipe = UniquePipe();
+        var requests = 0;
+        var raw = Task.Run(async () =>
+        {
+            await using var server = new System.IO.Pipes.NamedPipeServerStream(pipe, System.IO.Pipes.PipeDirection.InOut, 1,
+                System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
+            await server.WaitForConnectionAsync();
+            using var reader = new StreamReader(server);
+            if (await reader.ReadLineAsync() is not null) Interlocked.Increment(ref requests);
+        });
+        var launcher = new FakeLauncher(() => { });
+        var installer = new AgentInstaller(launcher, new AgentPipeClient(pipe, Environment.ProcessPath!), TimeSpan.FromSeconds(2));
+
+        var report = await installer.UpgradeAsync("Tencent.QQ", "9.9.21", InstallScopeHint.User, null, CancellationToken.None);
+        await raw;
+
+        Assert.False(report.Success);
+        Assert.Equal(0, launcher.Starts);
+        Assert.Equal(1, requests);
+    }
+
+    [Fact]
+    public async Task AgentInstaller_does_not_start_agent_when_server_is_not_ours()
+    {
+        var pipe = UniquePipe();
+        using var stop = new CancellationTokenSource();
+        var running = new AgentPipeServer(pipe, new AgentRequestHandler(new SlowInstaller(TimeSpan.FromMilliseconds(10)), true, "test"))
+            .RunAsync(TimeSpan.FromSeconds(30), stop.Token);
+        var launcher = new FakeLauncher(() => { });
+        var installer = new AgentInstaller(launcher,
+            new AgentPipeClient(pipe, @"C:\Program Files\UpdateHelper\UpdateHelper.Agent.exe"), TimeSpan.FromSeconds(15));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        var report = await installer.UpgradeAsync("Tencent.QQ", "9.9.21", InstallScopeHint.User, null, CancellationToken.None);
+
+        Assert.False(report.Success);
+        Assert.Equal(0, launcher.Starts);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3));
+        stop.Cancel();
+        await running;
+    }
 }

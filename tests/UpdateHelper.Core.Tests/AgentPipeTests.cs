@@ -76,6 +76,7 @@ public sealed class AgentPipeTests
             .SendAsync(new AgentRequest(AgentProtocol.Version, AgentOp.Ping), null, Connect, CancellationToken.None));
 
         Assert.Contains("不是后台助手", ex.Message);
+        Assert.Equal(AgentFailureKind.Rejected, ex.Kind);
         stop.Cancel();
         await running;
     }
@@ -84,8 +85,9 @@ public sealed class AgentPipeTests
     public async Task Client_fails_fast_when_nobody_listens()
     {
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        await Assert.ThrowsAsync<AgentUnavailableException>(() => new AgentPipeClient(UniquePipe(), ThisExe)
+        var ex = await Assert.ThrowsAsync<AgentUnavailableException>(() => new AgentPipeClient(UniquePipe(), ThisExe)
             .SendAsync(new AgentRequest(AgentProtocol.Version, AgentOp.Ping), null, TimeSpan.FromMilliseconds(300), CancellationToken.None));
+        Assert.Equal(AgentFailureKind.NotRunning, ex.Kind);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5));
     }
 

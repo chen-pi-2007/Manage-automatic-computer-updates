@@ -8,7 +8,14 @@ using Microsoft.Win32.SafeHandles;
 namespace UpdateHelper.Core.Agent;
 
 /// <summary>连不上后台助手、对方不是后台助手、或连接中途断开。Message 是给用户看的中文。</summary>
-public sealed class AgentUnavailableException(string message, Exception? inner = null) : Exception(message, inner);
+/// <summary>连不上后台助手的原因：没在运行（可启动重试）/ 被拒绝（冒充或没权限）/ 请求发出后断开（不能重发）。</summary>
+public enum AgentFailureKind { NotRunning, Rejected, Broken }
+
+public sealed class AgentUnavailableException(string message, AgentFailureKind kind = AgentFailureKind.Broken, Exception? inner = null)
+    : Exception(message, inner)
+{
+    public AgentFailureKind Kind { get; } = kind;
+}
 
 /// <summary>
 /// 后台助手的管道服务端。只允许当前用户连接、拒绝网络访问；一次处理一个连接、每个连接一条请求；
@@ -170,21 +177,21 @@ public sealed class AgentPipeClient(string pipeName, string expectedServerExe)
         }
         catch (UnauthorizedAccessException ex)
         {
-            throw new AgentUnavailableException("没有权限连接后台助手", ex);
+            throw new AgentUnavailableException("没有权限连接后台助手", AgentFailureKind.Rejected, ex);
         }
         catch (TimeoutException ex)
         {
-            throw new AgentUnavailableException("后台助手没有响应", ex);
+            throw new AgentUnavailableException("后台助手没有响应", AgentFailureKind.NotRunning, ex);
         }
         catch (IOException ex)
         {
-            throw new AgentUnavailableException($"连接后台助手失败：{ex.Message}", ex);
+            throw new AgentUnavailableException($"连接后台助手失败：{ex.Message}", AgentFailureKind.NotRunning, ex);
         }
 
         // 防冒充：管道另一头必须是安装目录里的后台助手
         var serverExe = ServerExecutable(pipe);
         if (!string.Equals(serverExe, Path.GetFullPath(expectedServerExe), StringComparison.OrdinalIgnoreCase))
-            throw new AgentUnavailableException($"管道另一头不是后台助手（{serverExe ?? "未知程序"}），已拒绝连接");
+            throw new AgentUnavailableException($"管道另一头不是后台助手（{serverExe ?? "未知程序"}），已拒绝连接", AgentFailureKind.Rejected);
 
         try
         {
@@ -194,16 +201,16 @@ public sealed class AgentPipeClient(string pipeName, string expectedServerExe)
             while (true)
             {
                 var line = await LineReader.ReadLineAsync(pipe, AgentProtocol.MaxLineChars, cancellationToken)
-                           ?? throw new AgentUnavailableException("后台助手中途断开了连接");
+                           ?? throw new AgentUnavailableException("后台助手中途断开了连接", AgentFailureKind.Broken);
                 var message = AgentProtocol.Decode<AgentResponse>(line)
-                              ?? throw new AgentUnavailableException("后台助手回复的格式不对");
+                              ?? throw new AgentUnavailableException("后台助手回复的格式不对", AgentFailureKind.Broken);
                 if (message.Type == AgentMessageType.Progress) progress?.Report(message.Progress);
                 else return message;
             }
         }
         catch (IOException ex)
         {
-            throw new AgentUnavailableException($"和后台助手的连接断开了：{ex.Message}", ex);
+            throw new AgentUnavailableException($"和后台助手的连接断开了：{ex.Message}", AgentFailureKind.Broken, ex);
         }
     }
 

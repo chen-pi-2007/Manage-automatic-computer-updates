@@ -29,9 +29,9 @@ public sealed class AgentInstaller(IAgentLauncher launcher, AgentPipeClient clie
             {
                 return AgentProtocol.ToReport(await client.SendAsync(request, progress, QuickTry, cancellationToken));
             }
-            catch (AgentUnavailableException) when (!cancellationToken.IsCancellationRequested)
+            catch (AgentUnavailableException ex) when (ex.Kind == AgentFailureKind.NotRunning && !cancellationToken.IsCancellationRequested)
             {
-                // 没在运行：通过计划任务启动，再等它准备好
+                // 没在运行（只有请求还没发出去时才会重试；发出后断开不能重发，否则可能重复安装）：通过计划任务启动，再等它准备好
                 launcher.Start();
                 return AgentProtocol.ToReport(await client.SendAsync(request, progress,
                     startTimeout ?? TimeSpan.FromSeconds(15), cancellationToken));
@@ -41,6 +41,8 @@ public sealed class AgentInstaller(IAgentLauncher launcher, AgentPipeClient clie
         {
             // 取消优先：用户已取消时，不把连接错误包装成失败报告
             cancellationToken.ThrowIfCancellationRequested();
+            if (ex is AgentUnavailableException { Kind: AgentFailureKind.Broken })
+                return new InstallerReport(false, false, $"和后台助手的连接中途断开（{ex.Message}），这次更新可能没有完成，请重新检查更新", null);
             return new InstallerReport(false, false, $"后台助手没有响应（{ex.Message}），{Hint}", null);
         }
     }
