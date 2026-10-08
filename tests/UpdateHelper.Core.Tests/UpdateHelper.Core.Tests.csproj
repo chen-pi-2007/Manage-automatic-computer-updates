@@ -19,4 +19,9 @@
     <ProjectReference Include="..\..\src\UpdateHelper.Core\UpdateHelper.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 启动器是 AOT 程序、不能被引用；只把它的纯逻辑文件拿来测试 -->
+    <Compile Include="..\..\src\UpdateHelper.AgentLauncher\CleanEnvironment.cs" Link="Linked\CleanEnvironment.cs" />
+  </ItemGroup>
+
 </Project>
