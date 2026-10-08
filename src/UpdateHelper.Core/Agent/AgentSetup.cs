@@ -80,7 +80,14 @@ public static class AgentSetup
 
         if (!string.Equals(source, target, StringComparison.OrdinalIgnoreCase))
         {
-            foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            // 以管理员身份复制时不跟随联接/符号链接，避免把源目录外的文件复制进 Program Files
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+                IgnoreInaccessible = false,
+            };
+            foreach (var file in Directory.EnumerateFiles(source, "*", options))
             {
                 var relative = Path.GetRelativePath(source, file);
                 var destination = Path.Combine(target, relative);

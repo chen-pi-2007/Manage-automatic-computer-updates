@@ -77,6 +77,55 @@ public sealed class AgentSetupTests : IDisposable
     }
 
     [Fact]
+    public void Deploy_does_not_follow_directory_junctions()
+    {
+        var source = Path.Combine(_dir, "src");
+        var outside = Path.Combine(_dir, "outside");
+        var target = Path.Combine(_dir, "target");
+        Directory.CreateDirectory(source);
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "secret.txt"), "secret");
+        File.WriteAllText(Path.Combine(source, "UpdateHelper.Agent.exe"), "new");
+
+        // mklink /J 不需要特殊权限；失败就直接让测试失败，不能悄悄通过
+        var link = Path.Combine(source, "link");
+        using (var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/c mklink /J \"{link}\" \"{outside}\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        }) ?? throw new InvalidOperationException("无法启动 cmd.exe"))
+        {
+            var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0 || !Directory.Exists(link))
+                Assert.Fail($"无法创建目录联接，测试无效: {output}");
+        }
+
+        try
+        {
+            AgentSetup.Deploy(source, target, "0.2.0");
+
+            Assert.True(File.Exists(Path.Combine(target, "UpdateHelper.Agent.exe")));
+            Assert.False(File.Exists(Path.Combine(target, "link", "secret.txt")));
+        }
+        finally
+        {
+            // 先非递归删除联接本身（只删链接，不动 outside 里的内容），否则清理时递归删除会失败
+            Directory.Delete(link);
+        }
+    }
+
+    [Fact]
+    public void Status_is_outdated_when_version_file_missing()
+    {
+        File.WriteAllText(Path.Combine(_dir, AgentPaths.AgentExeName), "x");
+        Assert.Equal(AgentStatus.Outdated, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: true));
+    }
+
+    [Fact]
     public void Status_reflects_files_task_and_version()
     {
         Assert.Equal(AgentStatus.NotEnabled, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: false));
