@@ -14,42 +14,84 @@ public sealed class AgentUnavailableException(string message, Exception? inner =
 /// 后台助手的管道服务端。只允许当前用户连接、拒绝网络访问；一次处理一个连接、每个连接一条请求；
 /// idleTimeout 内没有新连接就返回（Agent 进程随之退出，不常驻）。
 /// </summary>
-public sealed class AgentPipeServer(string pipeName, AgentRequestHandler handler)
+public sealed class AgentPipeServer(string pipeName, AgentRequestHandler handler, TimeSpan? requestTimeout = null)
 {
+    private readonly TimeSpan _requestTimeout = requestTimeout ?? TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(30);
+
     public async Task RunAsync(TimeSpan idleTimeout, CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        // 管道实例只建一次（FirstPipeInstance）：名字已被别人占了就直接退出，不去加入别人建的管道
+        NamedPipeServerStream pipe;
+        try
         {
-            using var pipe = CreatePipe();
-            using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            idle.CancelAfter(idleTimeout);
-            try
-            {
-                await pipe.WaitForConnectionAsync(idle.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                return;   // 空闲超时或被要求停止
-            }
+            pipe = CreatePipe();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
 
-            try
+        using (pipe)
+        {
+            while (!cancellationToken.IsCancellationRequested)
             {
-                await ServeOneAsync(pipe, cancellationToken);
-            }
-            catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
-            {
-                // 对方断开：处理下一个连接
+                using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                idle.CancelAfter(idleTimeout);
+                try
+                {
+                    await pipe.WaitForConnectionAsync(idle.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;   // 空闲超时或被要求停止
+                }
+                catch (IOException)
+                {
+                    TryDisconnect(pipe);   // 对方连上就断了：处理下一个连接
+                    continue;
+                }
+
+                try
+                {
+                    await ServeOneAsync(pipe, cancellationToken);
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
+                {
+                    // 对方断开或超时：处理下一个连接
+                }
+                finally
+                {
+                    TryDisconnect(pipe);
+                }
             }
         }
+    }
+
+    private static void TryDisconnect(NamedPipeServerStream pipe)
+    {
+        try { pipe.Disconnect(); }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or ObjectDisposedException) { }
     }
 
     private async Task ServeOneAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)
     {
         var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
-        Task Send(AgentResponse r) => writer.WriteLineAsync(AgentProtocol.Encode(r));
+        async Task Send(AgentResponse r)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(WriteTimeout);
+            await writer.WriteLineAsync(AgentProtocol.Encode(r).AsMemory(), cts.Token);
+        }
 
-        var line = await LineReader.ReadLineAsync(pipe, AgentProtocol.MaxLineChars, cancellationToken);
-        var request = line is null ? null : AgentProtocol.Decode<AgentRequest>(line);
+        string? line;
+        using (var readCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            readCts.CancelAfter(_requestTimeout);
+            line = await LineReader.ReadLineAsync(pipe, AgentProtocol.MaxLineChars, readCts.Token);
+        }
+        if (line is null) return;   // 对方没发就断开了，或超过长度上限：直接断开连接，不回复（回复会卡在还在写的对方身上）
+        var request = AgentProtocol.Decode<AgentRequest>(line);
         if (request is null)
         {
             await Send(new AgentResponse(AgentMessageType.Result, ErrorMessage: "请求格式不对"));
@@ -57,9 +99,19 @@ public sealed class AgentPipeServer(string pipeName, AgentRequestHandler handler
         }
 
         // App 断开连接（用户取消、程序被关）时取消安装器：另起一个读取，读到连接关闭就取消
-        using var disconnected = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _ = WatchDisconnectAsync(pipe, disconnected);
-        await handler.HandleAsync(request, Send, disconnected.Token);
+        var disconnected = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var watch = WatchDisconnectAsync(pipe, disconnected);
+        try
+        {
+            await handler.HandleAsync(request, Send, disconnected.Token);
+        }
+        finally
+        {
+            // 先停掉读取并等它结束，再释放 CTS，管道才能干净地复用给下一个连接
+            try { disconnected.Cancel(); } catch (ObjectDisposedException) { }
+            await watch;
+            disconnected.Dispose();
+        }
     }
 
     /// <summary>App 发完请求后只读不写，所以这边读到 0 字节（或出错）就说明它断开了。</summary>
@@ -80,12 +132,12 @@ public sealed class AgentPipeServer(string pipeName, AgentRequestHandler handler
     private NamedPipeServerStream CreatePipe()
     {
         var security = new PipeSecurity();
-        var user = WindowsIdentity.GetCurrent().User!;
-        security.AddAccessRule(new PipeAccessRule(user, PipeAccessRights.ReadWrite, AccessControlType.Allow));
+        using var identity = WindowsIdentity.GetCurrent();
+        security.AddAccessRule(new PipeAccessRule(identity.User!, PipeAccessRights.ReadWrite, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null),
             PipeAccessRights.FullControl, AccessControlType.Deny));
         return NamedPipeServerStreamAcl.Create(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous, 0, 0, security);
+            PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance, 0, 0, security);
     }
 }
 
@@ -98,7 +150,12 @@ public sealed class AgentPipeClient(string pipeName, string expectedServerExe)
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         try
         {
-            await pipe.ConnectAsync((int)connectTimeout.TotalMilliseconds, cancellationToken);
+            var ms = (int)Math.Clamp(connectTimeout.TotalMilliseconds, 0, int.MaxValue);
+            await pipe.ConnectAsync(ms, cancellationToken);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new AgentUnavailableException("没有权限连接后台助手", ex);
         }
         catch (TimeoutException ex)
         {

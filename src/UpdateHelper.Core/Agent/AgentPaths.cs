@@ -18,6 +18,9 @@ public static class AgentPaths
 
     public static string PipeName(string userSid) => $"UpdateHelper.Agent.{userSid}";
 
-    public static string CurrentUserSid() =>
-        WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("读不到当前用户的 SID");
+    public static string CurrentUserSid()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return identity.User?.Value ?? throw new InvalidOperationException("读不到当前用户的 SID");
+    }
 }

@@ -143,6 +143,89 @@ public sealed class AgentPipeTests
         Assert.StartsWith("S-1-5-", AgentPaths.CurrentUserSid());
     }
 
+    private static async Task AssertPingWorks(string pipe)
+    {
+        var pong = await new AgentPipeClient(pipe, ThisExe)
+            .SendAsync(new AgentRequest(AgentProtocol.Version, AgentOp.Ping), null, Connect, CancellationToken.None);
+        Assert.Equal(AgentMessageType.Pong, pong.Type);
+    }
+
+    [Fact]
+    public async Task Server_survives_client_that_connects_and_leaves()
+    {
+        var pipe = UniquePipe();
+        var (_, running, stop) = StartServer(pipe);
+        for (var i = 0; i < 5; i++)
+        {
+            var raw = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await raw.ConnectAsync(5000);
+            raw.Dispose();
+        }
+        await AssertPingWorks(pipe);
+        Assert.False(running.IsCompleted);
+        stop.Cancel();
+        await running;
+    }
+
+    [Fact]
+    public async Task Silent_client_times_out_and_server_keeps_serving()
+    {
+        var pipe = UniquePipe();
+        var stop = new CancellationTokenSource();
+        var server = new AgentPipeServer(pipe, new AgentRequestHandler(new FakeInstaller(), true, "test"), TimeSpan.FromMilliseconds(300));
+        var running = server.RunAsync(TimeSpan.FromSeconds(30), stop.Token);
+        using var silent = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+        await silent.ConnectAsync(5000);
+        await AssertPingWorks(pipe);
+        stop.Cancel();
+        await running;
+    }
+
+    [Fact]
+    public async Task Oversized_line_hits_byte_cap()
+    {
+        var pipe = UniquePipe();
+        var (_, running, stop) = StartServer(pipe);
+        using (var raw = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous))
+        {
+            await raw.ConnectAsync(5000);
+            var huge = new byte[AgentProtocol.MaxLineChars * 3 + 100];
+            Array.Fill(huge, (byte)'x');
+            try { await raw.WriteAsync(huge); } catch (IOException) { }
+        }
+        await AssertPingWorks(pipe);
+        stop.Cancel();
+        await running;
+    }
+
+    [Fact]
+    public async Task Second_server_with_same_name_exits_immediately()
+    {
+        var pipe = UniquePipe();
+        var (_, running, stop) = StartServer(pipe);
+        var b = new AgentPipeServer(pipe, new AgentRequestHandler(new FakeInstaller(), true, "test"));
+        var runningB = b.RunAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Same(runningB, await Task.WhenAny(runningB, Task.Delay(2000)));
+        await runningB;
+        await AssertPingWorks(pipe);
+        stop.Cancel();
+        await running;
+    }
+
+    [Fact]
+    public async Task Client_maps_access_denied_to_unavailable()
+    {
+        var pipe = UniquePipe();
+        var security = new System.IO.Pipes.PipeSecurity();
+        security.AddAccessRule(new System.IO.Pipes.PipeAccessRule(
+            System.Security.Principal.WindowsIdentity.GetCurrent().User!,
+            System.IO.Pipes.PipeAccessRights.FullControl, System.Security.AccessControl.AccessControlType.Deny));
+        using var denied = System.IO.Pipes.NamedPipeServerStreamAcl.Create(pipe, PipeDirection.InOut, 1,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+        await Assert.ThrowsAsync<AgentUnavailableException>(() => new AgentPipeClient(pipe, ThisExe)
+            .SendAsync(new AgentRequest(AgentProtocol.Version, AgentOp.Ping), null, Connect, CancellationToken.None));
+    }
+
     private sealed class SyncProgress(Action<double> report) : IProgress<double>
     {
         public void Report(double value) => report(value);
