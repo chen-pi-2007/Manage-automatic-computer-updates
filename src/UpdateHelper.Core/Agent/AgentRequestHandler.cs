@@ -28,13 +28,31 @@ public sealed class AgentRequestHandler(IPackageInstaller installer, bool elevat
             return;
         }
 
-        // 进度回调来自安装器的线程：排队按顺序发出，避免并发写管道
-        var pending = Task.CompletedTask;
+        // 进度回调来自安装器的线程：排队按顺序发出，避免并发写管道。
+        // 关门（closed）之后迟到的进度直接丢弃，保证没有进度排在结果后面、也没有写操作在 HandleAsync 返回后还在跑。
         var gate = new object();
+        var closed = false;
+        var pending = Task.CompletedTask;
         var progress = new SyncProgress(p =>
         {
-            lock (gate) pending = pending.ContinueWith(_ => send(new AgentResponse(AgentMessageType.Progress, Progress: p))).Unwrap();
+            lock (gate)
+            {
+                if (closed) return;
+                pending = pending.ContinueWith(_ => send(new AgentResponse(AgentMessageType.Progress, Progress: p))).Unwrap();
+            }
         });
+
+        // 关门，并等关门前已排队的进度发完
+        async Task CloseAndDrainAsync()
+        {
+            Task last;
+            lock (gate)
+            {
+                closed = true;
+                last = pending;
+            }
+            try { await last; } catch (Exception) { /* 进度没发出去不影响结果 */ }
+        }
 
         AgentResponse result;
         try
@@ -44,6 +62,7 @@ public sealed class AgentRequestHandler(IPackageInstaller installer, bool elevat
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            await CloseAndDrainAsync();
             return;   // App 已经断开或取消，没人接收结果
         }
         catch (Exception ex)
@@ -51,9 +70,7 @@ public sealed class AgentRequestHandler(IPackageInstaller installer, bool elevat
             result = Fail($"后台助手安装时出错：{ex.Message}");
         }
 
-        Task last;
-        lock (gate) last = pending;
-        try { await last; } catch (Exception) { /* 进度没发出去不影响结果 */ }
+        await CloseAndDrainAsync();
         await send(result);
     }
 

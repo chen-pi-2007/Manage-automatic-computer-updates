@@ -98,4 +98,104 @@ public sealed class AgentRequestHandlerTests
 
         Assert.Equal(new InstallerReport(false, false, "被系统策略禁止", 5), AgentProtocol.ToReport(result));
     }
+
+    private static readonly InstallerReport Ok = new(true, false, null, null);
+
+    private sealed class ScriptedInstaller(Func<IProgress<double>?, CancellationToken, Task<InstallerReport>> body) : IPackageInstaller
+    {
+        public string Name => "scripted";
+
+        public Task<InstallerReport> UpgradeAsync(string packageId, string targetVersion, InstallScopeHint scope,
+            IProgress<double>? progress, CancellationToken cancellationToken) => body(progress, cancellationToken);
+    }
+
+    [Fact]
+    public async Task Late_progress_after_install_returns_is_dropped()
+    {
+        IProgress<double>? captured = null;
+        var installer = new ScriptedInstaller((p, _) => { captured = p; return Task.FromResult(Ok); });
+        var sent = new List<AgentResponse>();
+        await new AgentRequestHandler(installer, elevated: true, "0.2.0")
+            .HandleAsync(Upgrade(), r => { sent.Add(r); return Task.CompletedTask; }, CancellationToken.None);
+
+        var countAfterResult = sent.Count;
+        captured!.Report(0.9);
+        await Task.Delay(200);   // 给迟到的进度留出发送的时间
+
+        Assert.Equal(countAfterResult, sent.Count);
+        Assert.Equal(AgentMessageType.Result, sent[^1].Type);
+        Assert.DoesNotContain(sent, r => r.Type == AgentMessageType.Progress && r.Progress == 0.9);
+    }
+
+    [Fact]
+    public async Task Several_progress_values_arrive_in_order_before_result()
+    {
+        var installer = new ScriptedInstaller((p, _) =>
+        {
+            p!.Report(0.1);
+            p.Report(0.2);
+            p.Report(0.3);
+            return Task.FromResult(Ok);
+        });
+        var sent = new List<AgentResponse>();
+        var gate = new object();
+        await new AgentRequestHandler(installer, elevated: true, "0.2.0").HandleAsync(Upgrade(),
+            async r => { await Task.Yield(); lock (gate) sent.Add(r); }, CancellationToken.None);
+
+        var progress = sent.Where(r => r.Type == AgentMessageType.Progress).Select(r => r.Progress).ToList();
+        Assert.Equal(new double[] { 0.1, 0.2, 0.3 }, progress);
+        Assert.Equal(AgentMessageType.Result, sent[^1].Type);
+    }
+
+    [Fact]
+    public async Task Throwing_progress_send_still_sends_result()
+    {
+        var installer = new ScriptedInstaller((p, _) =>
+        {
+            p!.Report(0.1);
+            p.Report(0.2);
+            return Task.FromResult(Ok);
+        });
+        var sent = new List<AgentResponse>();
+        await new AgentRequestHandler(installer, elevated: true, "0.2.0").HandleAsync(Upgrade(), r =>
+        {
+            if (r.Type == AgentMessageType.Progress) throw new InvalidOperationException("管道断了");
+            sent.Add(r);
+            return Task.CompletedTask;
+        }, CancellationToken.None);
+
+        var result = Assert.Single(sent);
+        Assert.Equal(AgentMessageType.Result, result.Type);
+        Assert.True(result.Success);
+    }
+
+    [Fact]
+    public async Task Installer_OperationCanceled_without_cancellation_becomes_failed_result()
+    {
+        var installer = new ScriptedInstaller((_, _) => throw new OperationCanceledException());
+        var sent = await Run(new AgentRequestHandler(installer, elevated: true, "0.2.0"), Upgrade());
+
+        var result = Assert.Single(sent);
+        Assert.Equal(AgentMessageType.Result, result.Type);
+        Assert.False(result.Success);
+    }
+
+    [Fact]
+    public async Task Cancellation_sends_no_result()
+    {
+        var installer = new ScriptedInstaller(async (_, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return Ok;
+        });
+        var sent = new List<AgentResponse>();
+        using var cts = new CancellationTokenSource();
+        var handling = new AgentRequestHandler(installer, elevated: true, "0.2.0")
+            .HandleAsync(Upgrade(), r => { sent.Add(r); return Task.CompletedTask; }, cts.Token);
+
+        cts.Cancel();
+        await handling;
+
+        Assert.DoesNotContain(sent, r => r.Type == AgentMessageType.Result);
+    }
 }
