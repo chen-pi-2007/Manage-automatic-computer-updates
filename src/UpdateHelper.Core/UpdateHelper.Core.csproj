@@ -7,4 +7,7 @@
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="UpdateHelper.Core.Tests" />
+  </ItemGroup>
 </Project>

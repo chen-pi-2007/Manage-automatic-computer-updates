@@ -19,6 +19,9 @@ public sealed class AgentPipeServer(string pipeName, AgentRequestHandler handler
     private readonly TimeSpan _requestTimeout = requestTimeout ?? TimeSpan.FromSeconds(10);
     private static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>仅供测试：管道实例建好后、第一次等待连接前调用一次（用来稳定复现“连上就断”的时间窗口）。</summary>
+    internal Func<Task>? BeforeFirstWait { get; init; }
+
     public async Task RunAsync(TimeSpan idleTimeout, CancellationToken cancellationToken)
     {
         // 管道实例只建一次（FirstPipeInstance）：名字已被别人占了就直接退出，不去加入别人建的管道
@@ -34,6 +37,8 @@ public sealed class AgentPipeServer(string pipeName, AgentRequestHandler handler
 
         using (pipe)
         {
+            if (BeforeFirstWait is not null) await BeforeFirstWait();
+            var brokenConnects = 0;
             while (!cancellationToken.IsCancellationRequested)
             {
                 using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -48,9 +53,13 @@ public sealed class AgentPipeServer(string pipeName, AgentRequestHandler handler
                 }
                 catch (IOException)
                 {
-                    TryDisconnect(pipe);   // 对方连上就断了：处理下一个连接
+                    // 对方在我们等待之前就连上又断了（ERROR_NO_DATA）。这时 .NET 的状态仍是“等待连接”，
+                    // Disconnect() 会直接抛异常、不会复位实例，所以直接调 Win32 DisconnectNamedPipe 复位（名字一直握在手里）
+                    DisconnectNamedPipe(pipe.SafePipeHandle);
+                    if (++brokenConnects >= MaxBrokenConnects) return;   // 防止空转：连续失败太多次就退出，下次由计划任务重新拉起
                     continue;
                 }
+                brokenConnects = 0;
 
                 try
                 {
@@ -67,6 +76,12 @@ public sealed class AgentPipeServer(string pipeName, AgentRequestHandler handler
             }
         }
     }
+
+    private const int MaxBrokenConnects = 10;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DisconnectNamedPipe(SafePipeHandle hNamedPipe);
 
     private static void TryDisconnect(NamedPipeServerStream pipe)
     {

@@ -154,7 +154,21 @@ public sealed class AgentPipeTests
     public async Task Server_survives_client_that_connects_and_leaves()
     {
         var pipe = UniquePipe();
-        var (_, running, stop) = StartServer(pipe);
+        var stop = new CancellationTokenSource();
+        var server = new AgentPipeServer(pipe, new AgentRequestHandler(new FakeInstaller(), true, "test"))
+        {
+            // 在第一次等待连接之前连上再断开：ConnectNamedPipe 会返回 ERROR_NO_DATA
+            BeforeFirstWait = async () =>
+            {
+                var raw = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+                await raw.ConnectAsync(5000);
+                raw.Dispose();
+            },
+        };
+        var running = server.RunAsync(TimeSpan.FromSeconds(30), stop.Token);
+        await AssertPingWorks(pipe);
+        Assert.False(running.IsCompleted);
+        // 之后再连上就断几次，也不影响
         for (var i = 0; i < 5; i++)
         {
             var raw = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
