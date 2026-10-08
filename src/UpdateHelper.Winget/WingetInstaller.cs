@@ -28,6 +28,9 @@ public sealed class WingetInstaller : IPackageInstaller
         if (found.Status != FindPackagesResultStatus.Ok || found.Matches.Count == 0)
             return new InstallerReport(false, false, $"在 winget 里找不到 {packageId}", null);
         var package = found.Matches[0].CatalogPackage;   // COM 列表按下标取
+        // 后台助手以管理员身份运行：只能升级本机已经装了的软件，不能借它装新软件
+        if (package.InstalledVersion is null)
+            return new InstallerReport(false, false, $"{packageId} 没有安装在这台电脑上，不能升级", null);
 
         var options = new InstallOptions
         {

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 后台助手：由计划任务以管理员身份启动。WinExe：运行时不出现黑色控制台窗口 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AssemblyName>UpdateHelper.Agent</AssemblyName>
+    <RootNamespace>UpdateHelper.Agent</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 必须直接引用，本地 dll 才会复制到输出目录（计划 3 的结论） -->
+    <PackageReference Include="Microsoft.WindowsPackageManager.ComInterop" Version="1.29.380" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UpdateHelper.Core\UpdateHelper.Core.csproj" />
+    <ProjectReference Include="..\UpdateHelper.Winget\UpdateHelper.Winget.csproj" />
+  </ItemGroup>
+
+</Project>

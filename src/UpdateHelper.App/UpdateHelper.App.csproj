@@ -12,7 +12,6 @@
     <RootNamespace>UpdateHelper.App</RootNamespace>
     <!-- 图标由 tools/Make-Icon.ps1 生成 -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>0.1.0</Version>
     <Product>更新管理小助手</Product>
   </PropertyGroup>
 
@@ -38,6 +37,8 @@
     <ProjectReference Include="..\UpdateHelper.Core\UpdateHelper.Core.csproj" />
     <ProjectReference Include="..\UpdateHelper.Winget\UpdateHelper.Winget.csproj" />
     <ProjectReference Include="..\UpdateHelper.Presentation\UpdateHelper.Presentation.csproj" />
+    <!-- 后台助手和主程序放在同一个目录：启用时整个目录复制到 Program Files -->
+    <ProjectReference Include="..\UpdateHelper.Agent\UpdateHelper.Agent.csproj" />
   </ItemGroup>
 
   <!-- 官方规则随程序发布 -->
