@@ -6,6 +6,10 @@ public partial class SettingsPage : System.Windows.Controls.Page
     {
         DataContext = AppHost.SettingsPage;
         InitializeComponent();
-        Loaded += (_, _) => AppHost.Agent.Refresh();
+        Loaded += (_, _) =>
+        {
+            AppHost.Agent.ClearMessage();
+            _ = AppHost.Agent.RefreshAsync();
+        };
     }
 }

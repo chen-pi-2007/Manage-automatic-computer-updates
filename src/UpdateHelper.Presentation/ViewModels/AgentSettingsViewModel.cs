@@ -10,17 +10,15 @@ public sealed partial class AgentSettingsViewModel : ObservableObject
     private readonly IAppBackend _backend;
     private AgentStatus? _status;
     private string? _statusError;
+    private bool _querying = true;
 
-    public AgentSettingsViewModel(IAppBackend backend)
-    {
-        _backend = backend;
-        Refresh();
-    }
+    /// <summary>构造时不查询（查询要调 schtasks，可能很慢）；由调用方在合适的时候 RefreshAsync。</summary>
+    public AgentSettingsViewModel(IAppBackend backend) => _backend = backend;
 
     [ObservableProperty] private string? _message;
     [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(EnableCommand), nameof(DisableCommand))] private bool _isBusy;
 
-    public string StatusText => _statusError is not null
+    public string StatusText => _querying ? "正在查询后台助手状态……" : _statusError is not null
         ? $"无法查询后台助手状态：{_statusError}"
         : _status switch
         {
@@ -30,7 +28,7 @@ public sealed partial class AgentSettingsViewModel : ObservableObject
             _ => "未启用：每次更新都会弹出管理员确认框",
         };
 
-    public string ActionText => _status switch
+    public string ActionText => _querying || _status is null ? "" : _status switch
     {
         AgentStatus.Ready => "",
         AgentStatus.Outdated => "更新后台助手",
@@ -39,13 +37,18 @@ public sealed partial class AgentSettingsViewModel : ObservableObject
     };
 
     public bool CanEnable => ActionText.Length > 0;
-    public bool CanDisable => _status is AgentStatus.Ready or AgentStatus.Outdated or AgentStatus.Broken;
+    public bool CanDisable => !_querying && _status is AgentStatus.Ready or AgentStatus.Outdated or AgentStatus.Broken;
 
-    public void Refresh()
+    public void ClearMessage() => Message = null;
+
+    /// <summary>在后台线程查询状态（不会卡界面），完成后回到调用线程更新显示。从不抛异常。</summary>
+    public async Task RefreshAsync()
     {
+        _querying = true;
+        Notify();
         try
         {
-            _status = _backend.GetAgentStatus();
+            _status = await Task.Run(_backend.GetAgentStatus);
             _statusError = null;
         }
         catch (Exception ex)
@@ -53,6 +56,12 @@ public sealed partial class AgentSettingsViewModel : ObservableObject
             _status = null;
             _statusError = ex.Message;
         }
+        _querying = false;
+        Notify();
+    }
+
+    private void Notify()
+    {
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(ActionText));
         OnPropertyChanged(nameof(CanEnable));
@@ -82,7 +91,7 @@ public sealed partial class AgentSettingsViewModel : ObservableObject
         finally
         {
             IsBusy = false;
-            Refresh();
+            await RefreshAsync();
         }
     }
 }

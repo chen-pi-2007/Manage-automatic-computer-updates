@@ -30,5 +30,6 @@ public static class AppHost
         History = new HistoryViewModel(State);
         SettingsPage = new SettingsViewModel(Settings);
         Agent = new AgentSettingsViewModel(backend);
+        _ = Agent.RefreshAsync();   // 后台查询，不挡启动
     }
 }

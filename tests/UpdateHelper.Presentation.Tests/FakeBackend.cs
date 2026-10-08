@@ -23,7 +23,8 @@ public sealed class FakeBackend : IAppBackend
     public Func<string?> OnEnableAgent { get; set; } = () => null;
     public Func<string?> OnDisableAgent { get; set; } = () => null;
 
-    public AgentStatus GetAgentStatus() => OnGetAgentStatus?.Invoke() ?? AgentStatus;
+    public int AgentStatusCalls { get; private set; }
+    public AgentStatus GetAgentStatus() { AgentStatusCalls++; return OnGetAgentStatus?.Invoke() ?? AgentStatus; }
     public Task<string?> EnableAgentAsync() => Task.FromResult(OnEnableAgent());
     public Task<string?> DisableAgentAsync() => Task.FromResult(OnDisableAgent());
 
