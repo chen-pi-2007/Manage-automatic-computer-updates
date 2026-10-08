@@ -34,7 +34,16 @@ if (!elevated) return 5;
 var schtasks = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
 
 if (args.Contains("--disable"))
-    return Run(schtasks, $"/delete /tn \"{AgentPaths.TaskName(userSid)}\" /f") == 0 ? 0 : 4;
+{
+    try
+    {
+        return Run(schtasks, $"/delete /tn \"{AgentPaths.TaskName(userSid)}\" /f") == 0 ? 0 : 4;
+    }
+    catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+    {
+        return 4;
+    }
+}
 
 if (!args.Contains("--install")) return 2;
 
@@ -69,17 +78,29 @@ catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 var xmlFile = Path.Combine(target, "agent-task.xml");
 try
 {
-    File.WriteAllText(xmlFile, AgentSetup.BuildTaskXml(userSid, Path.Combine(target, AgentPaths.AgentExeName)), System.Text.Encoding.Unicode);
+    try
+    {
+        File.WriteAllText(xmlFile, AgentSetup.BuildTaskXml(userSid, Path.Combine(target, AgentPaths.AgentExeName)), System.Text.Encoding.Unicode);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        return 3;
+    }
     return Run(schtasks, $"/create /tn \"{AgentPaths.TaskName(userSid)}\" /xml \"{xmlFile}\" /f") == 0 ? 0 : 4;
+}
+catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+{
+    return 4;
 }
 finally
 {
-    try { File.Delete(xmlFile); } catch (IOException) { }
+    try { File.Delete(xmlFile); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
 }
 
 static int Run(string exe, string arguments)
 {
-    using var p = Process.Start(new ProcessStartInfo(exe, arguments) { UseShellExecute = false, CreateNoWindow = true })!;
+    using var p = Process.Start(new ProcessStartInfo(exe, arguments) { UseShellExecute = false, CreateNoWindow = true });
+    if (p is null) return -1;
     p.WaitForExit();
     return p.ExitCode;
 }

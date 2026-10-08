@@ -66,8 +66,18 @@ public sealed class AgentController
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         })!;
-        p.WaitForExit(10_000);
-        return p.HasExited && p.ExitCode == 0;
+        if (!p.WaitForExit(10_000))
+        {
+            KillQuietly(p);
+            return false;
+        }
+        return p.ExitCode == 0;
+    }
+
+    private static void KillQuietly(Process p)
+    {
+        try { p.Kill(); }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { }
     }
 
     private sealed class TaskLauncher(string sid) : IAgentLauncher
@@ -81,8 +91,12 @@ public sealed class AgentController
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             })!;
-            p.WaitForExit(10_000);
-            if (!p.HasExited || p.ExitCode != 0)
+            if (!p.WaitForExit(10_000))
+            {
+                KillQuietly(p);
+                throw new InvalidOperationException("启动后台助手的计划任务超时");
+            }
+            if (p.ExitCode != 0)
                 throw new InvalidOperationException("启动后台助手的计划任务失败（可能已被删除）");
         }
     }
