@@ -126,3 +126,7 @@ tools/                       开发用脚本（生成图标、截图核对界面
 最欢迎的贡献是**规则**：如果某个软件没被认出来、风险判断不对，或者后台项目缺少说明，可以照 [rules/README.md](rules/README.md) 写一个 YAML 文件提交 Pull Request。
 
 发现问题请提 [Issue](https://github.com/chen-pi-2007/Manage-automatic-computer-updates/issues)，附上软件名、版本和你看到的现象。
+
+## 许可证
+
+[GPL-3.0](LICENSE)。可以自由使用、修改和分发；修改后再发布的版本也必须以 GPL-3.0 开源——这样就不会出现拿本项目代码加广告、捆绑后闭源售卖的版本。
