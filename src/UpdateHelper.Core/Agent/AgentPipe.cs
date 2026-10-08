@@ -7,10 +7,15 @@ using Microsoft.Win32.SafeHandles;
 
 namespace UpdateHelper.Core.Agent;
 
-/// <summary>连不上后台助手、对方不是后台助手、或连接中途断开。Message 是给用户看的中文。</summary>
-/// <summary>连不上后台助手的原因：没在运行（可启动重试）/ 被拒绝（冒充或没权限）/ 请求发出后断开（不能重发）。</summary>
+/// <summary>
+/// 连不上后台助手的原因：
+/// NotRunning：没在运行，请求还没发出，可以启动后重试；
+/// Rejected：被拒绝（没权限或对方不是后台助手），不要重试；
+/// Broken：请求发出后连接断开，不能重发（可能重复安装）。
+/// </summary>
 public enum AgentFailureKind { NotRunning, Rejected, Broken }
 
+/// <summary>连不上后台助手、对方不是后台助手、或连接中途断开。Message 是给用户看的中文。</summary>
 public sealed class AgentUnavailableException(string message, AgentFailureKind kind = AgentFailureKind.Broken, Exception? inner = null)
     : Exception(message, inner)
 {

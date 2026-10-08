@@ -97,13 +97,15 @@ public sealed class AgentInstallerTests
     {
         var pipe = UniquePipe();
         var requests = 0;
+        // 服务端先建好再让客户端去连，避免客户端的快速试连比服务端先到而误判为"没在运行"
+        await using var server = new System.IO.Pipes.NamedPipeServerStream(pipe, System.IO.Pipes.PipeDirection.InOut, 1,
+            System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
         var raw = Task.Run(async () =>
         {
-            await using var server = new System.IO.Pipes.NamedPipeServerStream(pipe, System.IO.Pipes.PipeDirection.InOut, 1,
-                System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
             await server.WaitForConnectionAsync();
             using var reader = new StreamReader(server);
             if (await reader.ReadLineAsync() is not null) Interlocked.Increment(ref requests);
+            server.Dispose();
         });
         var launcher = new FakeLauncher(() => { });
         var installer = new AgentInstaller(launcher, new AgentPipeClient(pipe, Environment.ProcessPath!), TimeSpan.FromSeconds(2));
