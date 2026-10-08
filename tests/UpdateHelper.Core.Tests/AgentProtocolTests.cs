@@ -59,6 +59,61 @@ public sealed class AgentProtocolTests
         Assert.Contains(expected, error);
     }
 
+    [Theory]
+    [InlineData("Tencent.QQ\n")]
+    [InlineData("Tencent.QQ\r\n")]
+    [InlineData("Tencent\t.QQ")]
+    [InlineData("Tencent.QQ\0")]
+    [InlineData("Tencent.ＱQ")]
+    [InlineData("Tencent.QQа")]
+    [InlineData("\"Tencent.QQ\"")]
+    [InlineData("Tencent .QQ")]
+    [InlineData("A..B")]
+    [InlineData(".Tencent.QQ")]
+    public void Validator_rejects_control_characters_and_lookalikes_in_package_id(string id)
+    {
+        var error = AgentRequestValidator.Validate(new AgentRequest(AgentProtocol.Version, AgentOp.Upgrade, id, "1.0"));
+        Assert.NotNull(error);
+        Assert.Contains("包 id 格式不对", error);
+    }
+
+    [Theory]
+    [InlineData("1.0\n")]
+    [InlineData("1.0\r\n")]
+    [InlineData("1\t0")]
+    public void Validator_rejects_control_characters_in_version(string version)
+    {
+        var error = AgentRequestValidator.Validate(new AgentRequest(AgentProtocol.Version, AgentOp.Upgrade, "Tencent.QQ", version));
+        Assert.NotNull(error);
+        Assert.Contains("版本号格式不对", error);
+    }
+
+    [Fact]
+    public void Validator_rejects_overlong_version()
+    {
+        var error = AgentRequestValidator.Validate(
+            new AgentRequest(AgentProtocol.Version, AgentOp.Upgrade, "Tencent.QQ", new string('1', 65)));
+        Assert.NotNull(error);
+        Assert.Contains("版本号格式不对", error);
+    }
+
+    [Fact]
+    public void Validator_rejects_null_version()
+    {
+        var error = AgentRequestValidator.Validate(
+            new AgentRequest(AgentProtocol.Version, AgentOp.Upgrade, "Tencent.QQ", null));
+        Assert.NotNull(error);
+        Assert.Contains("版本号格式不对", error);
+    }
+
+    [Fact]
+    public void Validator_rejects_operation_outside_enum()
+    {
+        var error = AgentRequestValidator.Validate(new AgentRequest(AgentProtocol.Version, (AgentOp)42));
+        Assert.NotNull(error);
+        Assert.Contains("不认识的操作", error);
+    }
+
     [Fact]
     public void Validator_rejects_other_protocol_versions_and_overlong_values()
     {

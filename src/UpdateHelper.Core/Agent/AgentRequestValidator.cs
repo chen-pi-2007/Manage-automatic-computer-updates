@@ -30,10 +30,10 @@ public static partial class AgentRequestValidator
     private static string Shorten(string? s) => s is null ? "（空）" : s.Length <= 40 ? s : s[..40] + "…";
 
     /// <summary>winget 包 id：发布者.名称（可以有多段），总长不超过 128。</summary>
-    [GeneratedRegex(@"^(?=.{3,128}$)[A-Za-z0-9][A-Za-z0-9_+\-]*(\.[A-Za-z0-9_+\-]+)+$")]
+    [GeneratedRegex(@"^(?=.{3,128}\z)[A-Za-z0-9][A-Za-z0-9_+\-]*(\.[A-Za-z0-9_+\-]+)+\z")]
     private static partial Regex PackageIdPattern();
 
     /// <summary>具体版本号：不能有空格和 &lt; &gt; 这类模糊写法，总长不超过 64。</summary>
-    [GeneratedRegex(@"^(?=.{1,64}$)[A-Za-z0-9][A-Za-z0-9._+\-]*$")]
+    [GeneratedRegex(@"^(?=.{1,64}\z)[A-Za-z0-9][A-Za-z0-9._+\-]*\z")]
     private static partial Regex VersionPattern();
 }
