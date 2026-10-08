@@ -1,3 +1,4 @@
+using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
@@ -20,4 +21,13 @@ public interface IAppBackend
     Task<UpdateReport> CheckUpdatesAsync(ScanSnapshot snapshot, CancellationToken cancellationToken);
     Task<ExecuteResult> InstallAsync(JudgedUpdate update, IProgress<double>? progress, CancellationToken cancellationToken);
     IReadOnlyList<HistoryRecord> ReadHistory();
+
+    /// <summary>后台助手的状态；查询本身失败时抛异常（由界面显示原因）。</summary>
+    AgentStatus GetAgentStatus();
+
+    /// <summary>启用免确认更新（弹一次管理员确认框）。null = 成功，否则是中文原因。</summary>
+    Task<string?> EnableAgentAsync();
+
+    /// <summary>关闭免确认更新（弹一次管理员确认框）。null = 成功，否则是中文原因。</summary>
+    Task<string?> DisableAgentAsync();
 }

@@ -6,5 +6,6 @@ public partial class SettingsPage : System.Windows.Controls.Page
     {
         DataContext = AppHost.SettingsPage;
         InitializeComponent();
+        Loaded += (_, _) => AppHost.Agent.Refresh();
     }
 }

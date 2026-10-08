@@ -16,6 +16,7 @@ public static class AppHost
     public static BackgroundViewModel Background { get; private set; } = null!;
     public static HistoryViewModel History { get; private set; } = null!;
     public static SettingsViewModel SettingsPage { get; private set; } = null!;
+    public static AgentSettingsViewModel Agent { get; private set; } = null!;
 
     public static void Initialize()
     {
@@ -28,5 +29,6 @@ public static class AppHost
         Background = new BackgroundViewModel(State);
         History = new HistoryViewModel(State);
         SettingsPage = new SettingsViewModel(Settings);
+        Agent = new AgentSettingsViewModel(backend);
     }
 }

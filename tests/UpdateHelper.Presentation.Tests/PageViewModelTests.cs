@@ -102,7 +102,7 @@ public sealed class PageViewModelTests : IDisposable
         Assert.Equal(1, vm.CheckIntervalHours);
         var saved = new SettingsStore(path).Load();
         Assert.Equal((30, 1, false), (saved.ObservationDays, saved.CheckIntervalHours, saved.TrayEnabled));
-        Assert.Contains("后续版本", vm.AutoUpdateNote);
+        Assert.Contains("下个版本", vm.AutoUpdateNote);
     }
 
     // —— 我的软件 ——

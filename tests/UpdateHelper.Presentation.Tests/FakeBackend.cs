@@ -1,3 +1,4 @@
+using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
@@ -16,6 +17,15 @@ public sealed class FakeBackend : IAppBackend
     public Func<JudgedUpdate, ExecuteResult> Install { get; set; } =
         u => new ExecuteResult(ExecuteOutcome.Succeeded, $"已从 {u.Candidate.InstalledVersion} 更新到 {u.Candidate.AvailableVersion}", u.Candidate.AvailableVersion);
     public List<HistoryRecord> History { get; } = [];
+
+    public AgentStatus AgentStatus { get; set; } = AgentStatus.NotEnabled;
+    public Func<AgentStatus>? OnGetAgentStatus { get; set; }
+    public Func<string?> OnEnableAgent { get; set; } = () => null;
+    public Func<string?> OnDisableAgent { get; set; } = () => null;
+
+    public AgentStatus GetAgentStatus() => OnGetAgentStatus?.Invoke() ?? AgentStatus;
+    public Task<string?> EnableAgentAsync() => Task.FromResult(OnEnableAgent());
+    public Task<string?> DisableAgentAsync() => Task.FromResult(OnDisableAgent());
 
     public int ScanCalls { get; private set; }
     public List<string> Installed { get; } = [];

@@ -95,7 +95,7 @@ public sealed class SettingsViewModel : ObservableObject
 
     public string? SaveError => _settings.SaveError;
 
-    public string AutoUpdateNote => "分级自动、全部自动和定时检查将在后续版本启用；目前程序打开时检查一次，有更新会提醒你。";
+    public string AutoUpdateNote => "分级自动、全部自动和定时检查将在下个版本启用；目前程序打开时检查一次，有更新会提醒你。";
 }
 
 /// <summary>强调色选项：显示名和颜色（null = 跟随系统）。</summary>
