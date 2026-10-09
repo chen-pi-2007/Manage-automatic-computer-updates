@@ -24,12 +24,10 @@ public sealed class LeftoverScanner(IFileProbe files, IRegistryProbe registry)
             .OfType<string>()
             .ToList();
 
-        // 1. 安装目录
-        foreach (var loc in group.InstallLocations)
-            AddDir(items, seenDirs, loc, LeftoverType.InstallDir, isInstallLocation: true,
-                ruleOwned: false, rulePersonal: false, ruleShared: false, nameMatchOnly: false, otherInstallDirs);
+        var installDirs = group.InstallLocations
+            .Select(PathUtil.NormalizeDir).OfType<string>().ToList();
 
-        // 2. 规则残留
+        // 1. 规则残留（先处理：同一路径被规则标成个人数据/共用时，更严格的判断优先于"安装目录=确定属于"）
         foreach (var lr in rule?.Leftovers ?? [])
         {
             var expanded = Environment.ExpandEnvironmentVariables(lr.Path);
@@ -38,16 +36,25 @@ public sealed class LeftoverScanner(IFileProbe files, IRegistryProbe registry)
             var shared = lr.Kind == LeftoverKind.Shared;
             if (IsRegistryPath(expanded))
             {
-                if (!SystemPaths.IsProtectedRegistryKey(expanded) && registry.KeyExists(expanded))
-                    items.Add(LeftoverJudge.Classify(LeftoverType.RegistryKey, expanded, null,
+                var key = SystemPaths.NormalizeRegistryPath(expanded);
+                if (!SystemPaths.IsProtectedRegistryKey(key) && registry.KeyExists(key))
+                    items.Add(LeftoverJudge.Classify(LeftoverType.RegistryKey, key, null,
                         owned, personal, shared, false, false, false));
             }
             else
             {
-                AddDir(items, seenDirs, expanded, LeftoverType.DataDir, isInstallLocation: false,
-                    owned, personal, shared, nameMatchOnly: false, otherInstallDirs);
+                var norm = PathUtil.NormalizeDir(expanded);
+                var isInstall = norm is not null
+                    && installDirs.Any(d => string.Equals(d, norm, StringComparison.OrdinalIgnoreCase));
+                AddDir(items, seenDirs, expanded, isInstall ? LeftoverType.InstallDir : LeftoverType.DataDir,
+                    isInstallLocation: isInstall, owned, personal, shared, nameMatchOnly: false, otherInstallDirs);
             }
         }
+
+        // 2. 安装目录
+        foreach (var loc in group.InstallLocations)
+            AddDir(items, seenDirs, loc, LeftoverType.InstallDir, isInstallLocation: true,
+                ruleOwned: false, rulePersonal: false, ruleShared: false, nameMatchOnly: false, otherInstallDirs);
 
         // 3. 数据目录启发式
         var needles = new[] { group.Name, group.Publisher }
@@ -92,6 +99,7 @@ public sealed class LeftoverScanner(IFileProbe files, IRegistryProbe registry)
         bool isInstallLocation, bool ruleOwned, bool rulePersonal, bool ruleShared, bool nameMatchOnly,
         List<string> otherInstallDirs)
     {
+        if (string.IsNullOrWhiteSpace(path) || path.Contains('%') || !Path.IsPathFullyQualified(path)) return;
         var norm = PathUtil.NormalizeDir(path);
         if (norm is null || !seen.Add(norm)) return;
         if (SystemPaths.IsProtectedDirectory(norm)) return;
@@ -104,7 +112,10 @@ public sealed class LeftoverScanner(IFileProbe files, IRegistryProbe registry)
     }
 
     private static bool IsRegistryPath(string path) =>
-        path.StartsWith("HKCU\\", StringComparison.OrdinalIgnoreCase)
+        path.StartsWith("HKEY_LOCAL_MACHINE\\", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("HKEY_CURRENT_USER\\", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("HKEY_CLASSES_ROOT\\", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("HKCU\\", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("HKLM\\", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("HKCR\\", StringComparison.OrdinalIgnoreCase);
 }

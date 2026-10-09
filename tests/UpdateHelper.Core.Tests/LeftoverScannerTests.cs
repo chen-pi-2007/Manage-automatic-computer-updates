@@ -158,4 +158,74 @@ public sealed class LeftoverScannerTests
             i => i.Type == LeftoverType.InstallDir);
         Assert.Null(item.SizeBytes);
     }
+
+    [Fact]
+    public void Rule_personal_on_install_location_wins_over_owned()
+    {
+        var files = new FakeFiles();
+        files.Dirs.Add(@"C:\Apps\Foo");
+        var g = Group("Foo", @"C:\Apps\Foo");
+        var rule = new Rule("f", "Foo", new RuleMatch("Foo", null), null, null, [],
+            [new LeftoverRule(@"C:\Apps\Foo", LeftoverKind.Personal)]);
+        var items = new LeftoverScanner(files, new FakeRegistry()).Scan(g, rule, Result(g));
+        var item = Assert.Single(items);
+        Assert.Equal(LeftoverCategory.Personal, item.Category);
+        Assert.False(item.DefaultChecked);
+    }
+
+    [Fact]
+    public void Unrelated_other_software_does_not_make_dir_shared()
+    {
+        var files = new FakeFiles();
+        files.Dirs.Add(@"C:\Apps\Foo");
+        var g = Group("Foo", @"C:\Apps\Foo");
+        var other = Group("Other", @"C:\Apps\Other");
+        var item = Assert.Single(new LeftoverScanner(files, new FakeRegistry()).Scan(g, null, Result(g, other)));
+        Assert.Equal(LeftoverCategory.Owned, item.Category);
+    }
+
+    [Fact]
+    public void Too_short_name_does_not_match_data_dirs()
+    {
+        var files = new FakeFiles();
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData).TrimEnd('\\');
+        files.Children[local] = [Path.Combine(local, "ABCDEF")];
+        files.Dirs.Add(Path.Combine(local, "ABCDEF"));
+        var g = Group("XY", null, publisher: "AB");
+        Assert.Empty(new LeftoverScanner(files, new FakeRegistry()).Scan(g, null, Result(g)));
+    }
+
+    [Fact]
+    public void Registry_under_microsoft_is_not_listed()
+    {
+        var reg = new FakeRegistry();
+        reg.Keys.Add(@"HKLM\SOFTWARE\Microsoft\Foo");
+        var g = Group("Foo", null);
+        var rule = new Rule("f", "Foo", new RuleMatch("Foo", null), null, null, [],
+            [new LeftoverRule(@"HKLM\SOFTWARE\Microsoft\Foo", LeftoverKind.Owned)]);
+        Assert.Empty(new LeftoverScanner(new FakeFiles(), reg).Scan(g, rule, Result(g)));
+    }
+
+    [Fact]
+    public void Long_hive_name_is_normalized()
+    {
+        var reg = new FakeRegistry();
+        reg.Keys.Add(@"HKCU\Software\Foo");
+        var g = Group("Foo", null);
+        var rule = new Rule("f", "Foo", new RuleMatch("Foo", null), null, null, [],
+            [new LeftoverRule(@"HKEY_CURRENT_USER\Software\Foo", LeftoverKind.Owned)]);
+        var key = Assert.Single(new LeftoverScanner(new FakeFiles(), reg).Scan(g, rule, Result(g)));
+        Assert.Equal(@"HKCU\Software\Foo", key.Path);
+    }
+
+    [Fact]
+    public void Relative_or_unexpanded_rule_path_is_skipped()
+    {
+        var files = new FakeFiles();
+        var g = Group("Foo", null);
+        var rule = new Rule("f", "Foo", new RuleMatch("Foo", null), null, null, [],
+            [new LeftoverRule(@"%NOPE_UNDEFINED%\Foo", LeftoverKind.Owned),
+             new LeftoverRule(@"relative\Foo", LeftoverKind.Owned)]);
+        Assert.Empty(new LeftoverScanner(files, new FakeRegistry()).Scan(g, rule, Result(g)));
+    }
 }
