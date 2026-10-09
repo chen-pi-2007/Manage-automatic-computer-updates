@@ -83,7 +83,8 @@ public partial class App : Application
         // --minimized：只在托盘里，不显示窗口（不要先 Show 再关，FluentWindow 在 Loaded 里关闭会崩溃）
         if (!e.Args.Contains("--minimized")) ShowWindow(startPage);
 
-        _ = AppHost.State.RefreshAsync();   // 启动时扫描并检查一次
+        // 手动打开就立即检查一次（含"打开才检查"模式）；开机自启(--login)则交给计时器在 5 分钟后首检，避免和开机程序抢资源
+        if (!_startedAtLogin) _ = AppHost.State.RefreshAsync();
 
         // 每分钟问一次 CheckSchedule 该不该检查
         _checkTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
