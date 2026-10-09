@@ -26,6 +26,9 @@ public partial class App : Application
     private MainWindow? _window;
     private TrayIcon? _tray;
     private bool _exitRequested;
+    private readonly DateTimeOffset _startedAt = DateTimeOffset.Now;
+    private bool _startedAtLogin;
+    private System.Windows.Threading.DispatcherTimer? _checkTimer;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -46,7 +49,15 @@ public partial class App : Application
                 Dispatcher.Invoke(() => ShowWindow(null));
         }) { IsBackground = true }.Start();
 
+        _startedAtLogin = e.Args.Contains("--login");
+        Notifier.EnsureHooked();
+        Notifier.Activated += page => Dispatcher.Invoke(() => ShowWindow(page == "updates" ? typeof(Pages.UpdatesPage) : null));
+
         AppHost.Initialize();
+
+        // 每次启动都按当前程序路径对齐一次登记（程序被挪动后会改写到新位置）
+        AutoStart.Apply(AppHost.Settings.Current.StartWithWindows);
+        AppHost.Settings.PropertyChanged += (_, _) => AutoStart.Apply(AppHost.Settings.Current.StartWithWindows);
 
         _tray = new TrayIcon { Visible = AppHost.Settings.Current.TrayEnabled };
         _tray.OpenRequested += () => ShowWindow(null);
@@ -72,7 +83,18 @@ public partial class App : Application
         // --minimized：只在托盘里，不显示窗口（不要先 Show 再关，FluentWindow 在 Loaded 里关闭会崩溃）
         if (!e.Args.Contains("--minimized")) ShowWindow(startPage);
 
-        _ = AppHost.State.RefreshAsync();   // 启动时扫描并检查一次
+        // 手动打开就立即检查一次（含"打开才检查"模式）；开机自启(--login)则交给计时器在 5 分钟后首检，避免和开机程序抢资源
+        if (!_startedAtLogin) _ = AppHost.State.RefreshAsync();
+
+        // 每分钟问一次 CheckSchedule 该不该检查
+        _checkTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        _checkTimer.Tick += (_, _) =>
+        {
+            if (CheckSchedule.ShouldCheck(DateTimeOffset.Now, _startedAt, _startedAtLogin,
+                    AppHost.State.LastChecked, AppHost.Settings.Current, AppHost.State.IsBusy))
+                _ = AppHost.State.RefreshAsync();
+        };
+        _checkTimer.Start();
     }
 
     private void ShowWindow(Type? page)
@@ -104,7 +126,7 @@ public partial class App : Application
     {
         if (e.PropertyName != nameof(AppState.LastChecked) || _tray is not { Visible: true }) return;
         var text = TrayPolicy.NotificationText(AppHost.State.Updates, _window is { IsVisible: true, WindowState: not WindowState.Minimized });
-        if (text is not null) _tray.Notify("更新管理小助手", text);
+        if (text is not null) Notifier.Show("更新管理小助手", text);
     }
 
     private void ExitApp()
@@ -118,6 +140,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _checkTimer?.Stop();
         _tray?.Dispose();
         _activate?.Dispose();
         _singleInstance?.Dispose();

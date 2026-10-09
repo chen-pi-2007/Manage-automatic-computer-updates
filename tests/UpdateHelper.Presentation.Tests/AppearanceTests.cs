@@ -56,6 +56,15 @@ public sealed class AppearanceTests : IDisposable
     }
 
     [Fact]
+    public void Start_with_windows_defaults_off_and_survives_save()
+    {
+        Assert.False(new AppSettings().StartWithWindows);
+        var store = new SettingsStore(SettingsPath);
+        store.Save(new AppSettings { StartWithWindows = true });
+        Assert.True(new SettingsStore(SettingsPath).Load().StartWithWindows);
+    }
+
+    [Fact]
     public void Old_settings_file_without_appearance_gets_defaults()
     {
         File.WriteAllText(SettingsPath, """{"Mode":0,"ObservationDays":3,"CheckIntervalHours":24,"TrayEnabled":true}""");
