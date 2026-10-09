@@ -42,6 +42,9 @@ public sealed record AppSettings
     /// <summary>紧凑模式：表格行更矮，一屏能看到更多软件。</summary>
     public bool Compact { get; init; }
 
+    /// <summary>开机时自动启动到托盘（默认关）。</summary>
+    public bool StartWithWindows { get; init; }
+
     /// <summary>把越界的数值限制到范围内，未定义的选项和格式不对的颜色换成默认。</summary>
     public AppSettings Normalized() => this with
     {

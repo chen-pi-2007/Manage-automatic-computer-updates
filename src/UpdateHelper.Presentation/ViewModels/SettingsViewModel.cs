@@ -93,6 +93,12 @@ public sealed class SettingsViewModel : ObservableObject
         set => _settings.Update(s => s with { Compact = value });
     }
 
+    public bool StartWithWindows
+    {
+        get => _settings.Current.StartWithWindows;
+        set => _settings.Update(s => s with { StartWithWindows = value });
+    }
+
     public string? SaveError => _settings.SaveError;
 
     public string AutoUpdateNote => "分级自动、全部自动和定时检查将在后续版本启用；目前程序打开时检查一次，有更新会提醒你。";
