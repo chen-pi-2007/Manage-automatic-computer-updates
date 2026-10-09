@@ -228,4 +228,15 @@ public sealed class LeftoverScannerTests
              new LeftoverRule(@"relative\Foo", LeftoverKind.Owned)]);
         Assert.Empty(new LeftoverScanner(files, new FakeRegistry()).Scan(g, rule, Result(g)));
     }
+
+    [Fact]
+    public void Quoted_install_location_is_cleaned_and_listed()
+    {
+        var files = new FakeFiles();
+        files.Dirs.Add(@"C:\Apps\Foo");
+        var g = Group("Foo", "\"C:\\Apps\\Foo\"");
+        var item = Assert.Single(new LeftoverScanner(files, new FakeRegistry()).Scan(g, null, Result(g)));
+        Assert.Equal(LeftoverType.InstallDir, item.Type);
+        Assert.Equal(LeftoverCategory.Owned, item.Category);
+    }
 }

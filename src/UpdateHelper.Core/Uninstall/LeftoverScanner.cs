@@ -99,8 +99,9 @@ public sealed class LeftoverScanner(IFileProbe files, IRegistryProbe registry)
         bool isInstallLocation, bool ruleOwned, bool rulePersonal, bool ruleShared, bool nameMatchOnly,
         List<string> otherInstallDirs)
     {
-        if (string.IsNullOrWhiteSpace(path) || path.Contains('%') || !Path.IsPathFullyQualified(path)) return;
-        var norm = PathUtil.NormalizeDir(path);
+        var cleaned = path?.Trim().Trim('"').Trim();
+        if (string.IsNullOrWhiteSpace(cleaned) || cleaned.Contains('%') || !Path.IsPathFullyQualified(cleaned)) return;
+        var norm = PathUtil.NormalizeDir(cleaned);
         if (norm is null || !seen.Add(norm)) return;
         if (SystemPaths.IsProtectedDirectory(norm)) return;
         if (!files.DirectoryExists(norm)) return;
