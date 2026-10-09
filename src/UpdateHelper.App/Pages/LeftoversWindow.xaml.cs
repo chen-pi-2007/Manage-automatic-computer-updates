@@ -8,6 +8,7 @@ namespace UpdateHelper.App.Pages;
 public partial class LeftoversWindow : Window
 {
     private readonly SoftwareGroup _group;
+    private bool _loaded;
 
     public LeftoversWindow(SoftwareGroup group)
     {
@@ -19,6 +20,8 @@ public partial class LeftoversWindow : Window
 
     private async Task LoadAsync()
     {
+        if (_loaded) return;
+        _loaded = true;
         try
         {
             var items = await Task.Run(() => AppHost.State.Backend.ScanLeftovers(_group));

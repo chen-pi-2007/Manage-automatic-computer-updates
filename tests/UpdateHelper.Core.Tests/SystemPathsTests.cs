@@ -61,6 +61,68 @@ public sealed class SystemPathsTests
         Assert.True(SystemPaths.IsProtectedRegistryKey(key));
 
     [Theory]
+    [InlineData(@"HKCU\SOFTWARE\Classes")]
+    [InlineData(@"HKCU\SOFTWARE\Classes\.foo")]
+    [InlineData(@"HKLM\SOFTWARE\WOW6432Node\Classes")]
+    [InlineData(@"HKLM\SOFTWARE\WOW6432Node\Classes\CLSID\X")]
+    [InlineData(@"HKLM\SOFTWARE\WOW6432Node\Policies")]
+    [InlineData(@"HKLM\SOFTWARE\WOW6432Node\Policies\X")]
+    [InlineData(@"HKCU\SOFTWARE\WOW6432Node\Classes")]
+    [InlineData(@"HKCU\SOFTWARE\WOW6432Node\Classes\X")]
+    [InlineData(@"HKCU\SOFTWARE\WOW6432Node\Policies")]
+    [InlineData(@"HKCU\SOFTWARE\WOW6432Node\Policies\X")]
+    public void Registry_classes_policies_subtrees_protected(string key) =>
+        Assert.True(SystemPaths.IsProtectedRegistryKey(key));
+
+    private static string Local => Env(Environment.SpecialFolder.LocalApplicationData);
+
+    [Fact]
+    public void WindowsApps_subtree_protected()
+    {
+        var wa = Path.Combine(Env(Environment.SpecialFolder.ProgramFiles), "WindowsApps");
+        Assert.True(SystemPaths.IsProtectedDirectory(wa));
+        Assert.True(SystemPaths.IsProtectedDirectory(Path.Combine(wa, "Some.App_1.0")));
+    }
+
+    [Fact]
+    public void Microsoft_containers_subtree_protected_vendor_allowed()
+    {
+        string[] roots =
+        [
+            Path.Combine(Local, "Microsoft"),
+            Path.Combine(Env(Environment.SpecialFolder.ApplicationData), "Microsoft"),
+            Path.Combine(Env(Environment.SpecialFolder.CommonApplicationData), "Microsoft"),
+            Path.Combine(Env(Environment.SpecialFolder.CommonProgramFiles), "Microsoft Shared"),
+            Path.Combine(Env(Environment.SpecialFolder.CommonProgramFilesX86), "Microsoft Shared"),
+        ];
+        foreach (var r in roots)
+        {
+            Assert.True(SystemPaths.IsProtectedDirectory(r), r);
+            Assert.True(SystemPaths.IsProtectedDirectory(Path.Combine(r, "Sub")), r);
+        }
+        Assert.False(SystemPaths.IsProtectedDirectory(Path.Combine(Local, "SomeVendor")));
+    }
+
+    [Fact]
+    public void Temp_and_LocalPrograms_roots_protected_subdirs_allowed()
+    {
+        var temp = Path.GetTempPath();
+        Assert.True(SystemPaths.IsProtectedDirectory(temp));
+        Assert.False(SystemPaths.IsProtectedDirectory(Path.Combine(temp, "VendorTemp")));
+        var programs = Path.Combine(Local, "Programs");
+        Assert.True(SystemPaths.IsProtectedDirectory(programs));
+        Assert.False(SystemPaths.IsProtectedDirectory(Path.Combine(programs, "Vendor")));
+    }
+
+    [Fact]
+    public void Media_folders_roots_protected()
+    {
+        Assert.True(SystemPaths.IsProtectedDirectory(Env(Environment.SpecialFolder.MyPictures)));
+        Assert.True(SystemPaths.IsProtectedDirectory(Env(Environment.SpecialFolder.MyVideos)));
+        Assert.True(SystemPaths.IsProtectedDirectory(Env(Environment.SpecialFolder.MyMusic)));
+    }
+
+    [Theory]
     [InlineData(@"HKCU\Software\Tencent")]
     [InlineData(@"HKLM\SOFTWARE\Kingsoft\WPS")]
     [InlineData(@"HKLM\SOFTWARE\WOW6432Node\Kingsoft")]

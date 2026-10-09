@@ -6,7 +6,6 @@ namespace UpdateHelper.Core.Uninstall;
 public sealed class RealFileProbe : IFileProbe
 {
     public bool DirectoryExists(string path) { try { return Directory.Exists(path); } catch { return false; } }
-    public bool FileExists(string path) { try { return File.Exists(path); } catch { return false; } }
 
     public IReadOnlyList<string> GetChildDirectories(string parent)
     {

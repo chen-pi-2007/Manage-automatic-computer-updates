@@ -4,7 +4,6 @@ namespace UpdateHelper.Core.Uninstall;
 public interface IFileProbe
 {
     bool DirectoryExists(string path);
-    bool FileExists(string path);
     IReadOnlyList<string> GetChildDirectories(string parent);
     long? DirectorySize(string path);
 }

@@ -14,7 +14,6 @@ public sealed class LeftoverScannerTests
         public Dictionary<string, List<string>> Children { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, long?> Sizes { get; } = new(StringComparer.OrdinalIgnoreCase);
         public bool DirectoryExists(string path) => Dirs.Contains(path.TrimEnd('\\'));
-        public bool FileExists(string path) => Files.Contains(path);
         public IReadOnlyList<string> GetChildDirectories(string parent) =>
             Children.TryGetValue(parent.TrimEnd('\\'), out var c) ? c : [];
         public long? DirectorySize(string path) => Sizes.TryGetValue(path.TrimEnd('\\'), out var s) ? s : 0;

@@ -6,10 +6,25 @@ namespace UpdateHelper.Core.Uninstall;
 public static class SystemPaths
 {
     // 整个子树受保护：Windows 目录之内没有任何合法的软件自有残留
-    private static readonly string[] SubtreeProtectedDirs =
-    [
-        Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-    ];
+    private static readonly string?[] SubtreeProtectedDirs = BuildSubtreeProtectedDirs();
+
+    private static string? Sub(string root, string name) => string.IsNullOrEmpty(root) ? null : Path.Combine(root, name);
+
+    private static string?[] BuildSubtreeProtectedDirs()
+    {
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        return
+        [
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            // 微软/Windows 自有容器：里面没有第三方软件可清理的内容
+            Sub(pf, "WindowsApps"),
+            Sub(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft"),
+            Sub(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft"),
+            Sub(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Microsoft"),
+            Sub(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles), "Microsoft Shared"),
+            Sub(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFilesX86), "Microsoft Shared"),
+        ];
+    }
 
     // 仅"根本身"受保护：这些容器目录不能整个当残留删，但厂商自己的子目录是真实残留
     private static readonly string?[] RootOnlyDirs = BuildRootOnlyDirs();
@@ -33,6 +48,12 @@ public static class SystemPaths
             profile,
             Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Sub(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs"),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyMusic),
+            Environment.GetEnvironmentVariable("OneDrive"),
+            Path.GetTempPath(),
             @"C:\Users", @"C:\Users\Public", @"C:\",
         ];
     }
@@ -91,6 +112,8 @@ public static class SystemPaths
             @"HKLM\SYSTEM", @"HKLM\SECURITY", @"HKLM\SAM", @"HKLM\HARDWARE",
             @"HKLM\SOFTWARE\Microsoft", @"HKCU\SOFTWARE\Microsoft", @"HKLM\SOFTWARE\WOW6432Node\Microsoft",
             @"HKLM\SOFTWARE\Classes", @"HKLM\SOFTWARE\Policies", @"HKCU\SOFTWARE\Policies",
+            @"HKCU\SOFTWARE\Classes", @"HKLM\SOFTWARE\WOW6432Node\Classes", @"HKLM\SOFTWARE\WOW6432Node\Policies",
+            @"HKCU\SOFTWARE\WOW6432Node\Classes", @"HKCU\SOFTWARE\WOW6432Node\Policies",
         ];
         return subtree.Any(pre =>
             p.Equals(pre, StringComparison.OrdinalIgnoreCase)
