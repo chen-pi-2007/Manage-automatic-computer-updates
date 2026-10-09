@@ -7,7 +7,7 @@ namespace UpdateHelper.Presentation;
 /// 各页面共享的状态：最近一次扫描、更新列表、是否正在忙。
 /// 同一时间只做一件耗时的事（扫描/检查或安装），忙时新的请求直接忽略（Review Focus 1）。
 /// </summary>
-public sealed partial class AppState(IAppBackend backend, TimeProvider? clock = null) : ObservableObject
+public sealed partial class AppState(IAppBackend backend, TimeProvider? clock = null, FirstSeenStore? firstSeen = null) : ObservableObject
 {
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
@@ -34,6 +34,8 @@ public sealed partial class AppState(IAppBackend backend, TimeProvider? clock = 
             StatusText = "正在检查更新……";
             var report = await backend.CheckUpdatesAsync(snapshot, CancellationToken.None);
             Updates = report.Updates;
+            // 观察期从"第一次被发现"开始算；记录失败不影响这次检查
+            firstSeen?.Record(report.Updates.Select(u => (u.Candidate.PackageId, u.Candidate.AvailableVersion)));
 
             var warnings = snapshot.Warnings.Concat(report.Warning is null ? [] : [report.Warning]).ToList();
             Warning = warnings.Count == 0 ? null : string.Join("；", warnings);

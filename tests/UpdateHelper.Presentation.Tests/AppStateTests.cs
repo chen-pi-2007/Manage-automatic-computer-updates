@@ -6,6 +6,24 @@ namespace UpdateHelper.Presentation.Tests;
 public class AppStateTests
 {
     [Fact]
+    public async Task Refresh_records_first_seen_versions()
+    {
+        var dir = Directory.CreateTempSubdirectory("uh-state-seen-").FullName;
+        try
+        {
+            var backend = new FakeBackend { Report = new UpdateReport([Update("QQ", UpdateTier.Low)], null) };
+            var store = new FirstSeenStore(Path.Combine(dir, "first-seen.json"));
+            var state = new AppState(backend, firstSeen: store);
+
+            await state.RefreshAsync();
+
+            var u = state.Updates.Single();
+            Assert.NotNull(store.Get(u.Candidate.PackageId, u.Candidate.AvailableVersion));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
     public async Task Refresh_fills_snapshot_updates_and_time()
     {
         var backend = new FakeBackend
