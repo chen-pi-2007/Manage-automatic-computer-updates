@@ -34,8 +34,9 @@ public sealed partial class AppState(IAppBackend backend, TimeProvider? clock = 
             StatusText = "正在检查更新……";
             var report = await backend.CheckUpdatesAsync(snapshot, CancellationToken.None);
             Updates = report.Updates;
-            // 观察期从"第一次被发现"开始算；记录失败不影响这次检查
-            firstSeen?.Record(report.Updates.Select(u => (u.Candidate.PackageId, u.Candidate.AvailableVersion)));
+            // 观察期从"第一次被发现"开始算；记录失败绝不影响这次检查结果
+            try { firstSeen?.Record(report.Updates.Select(u => (u.Candidate.PackageId, u.Candidate.AvailableVersion))); }
+            catch (Exception) { }
 
             var warnings = snapshot.Warnings.Concat(report.Warning is null ? [] : [report.Warning]).ToList();
             Warning = warnings.Count == 0 ? null : string.Join("；", warnings);

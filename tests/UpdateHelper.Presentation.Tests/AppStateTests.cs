@@ -6,6 +6,21 @@ namespace UpdateHelper.Presentation.Tests;
 public class AppStateTests
 {
     [Fact]
+    public async Task Refresh_succeeds_even_if_first_seen_store_throws()
+    {
+        var backend = new FakeBackend { Report = new UpdateReport([Update("QQ", UpdateTier.Low)], null) };
+        // 路径含空字符时 Path.GetFullPath 抛 ArgumentException（非 IO 异常），Record 不会吞掉它
+        var store = new FirstSeenStore(Path.Combine(Path.GetTempPath(), "bad\0name", "first-seen.json"));
+        var state = new AppState(backend, firstSeen: store);
+
+        await state.RefreshAsync();
+
+        Assert.Null(state.Warning);
+        Assert.NotNull(state.LastChecked);
+        Assert.Single(state.Updates);
+    }
+
+    [Fact]
     public async Task Refresh_records_first_seen_versions()
     {
         var dir = Directory.CreateTempSubdirectory("uh-state-seen-").FullName;
