@@ -2,6 +2,7 @@ using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Scanning;
+using UpdateHelper.Core.Uninstall;
 using UpdateHelper.Core.Updates;
 
 namespace UpdateHelper.Presentation.Tests;
@@ -38,6 +39,9 @@ public sealed class FakeBackend : IAppBackend
     }
 
     public IReadOnlyList<HistoryRecord> ReadHistory() => History;
+
+    public Func<SoftwareGroup, IReadOnlyList<LeftoverItem>> OnScanLeftovers { get; set; } = _ => [];
+    public IReadOnlyList<LeftoverItem> ScanLeftovers(SoftwareGroup group) => OnScanLeftovers(group);
 
     // —— 构造测试数据 ——
 

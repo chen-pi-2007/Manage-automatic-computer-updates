@@ -21,9 +21,10 @@
             <TextBlock Text="{Binding CountText}" VerticalAlignment="Center" Margin="16,0,0,0" Opacity="0.7" />
             <ui:Button Content="卸载" IsEnabled="False" Margin="16,0,0,0" ToolTipService.ShowOnDisabled="True"
                        ToolTip="卸载功能将在后续版本提供" />
+            <ui:Button x:Name="LeftoverButton" Content="查看残留" Margin="8,0,0,0" Click="ViewLeftovers_Click" />
         </StackPanel>
         <ui:DataGrid Grid.Row="2" ItemsSource="{Binding Rows}" RowHeight="{DynamicResource UhRowHeight}" AutoGenerateColumns="False" CanUserAddRows="False"
-                     HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="True">
+                     x:Name="SoftwareGrid" HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="True">
             <ui:DataGrid.Columns>
                 <DataGridTemplateColumn Header="名称" Width="2*" SortMemberPath="Name">
                     <DataGridTemplateColumn.CellTemplate>
