@@ -11,7 +11,7 @@ public sealed class RealFileProbe : IFileProbe
     public IReadOnlyList<string> GetChildDirectories(string parent)
     {
         try { return Directory.Exists(parent) ? Directory.GetDirectories(parent) : []; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException) { return []; }
     }
 
     public long? DirectorySize(string path)
@@ -32,7 +32,7 @@ public sealed class RealFileProbe : IFileProbe
             }
             return total;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
         {
             return null;
         }
@@ -44,8 +44,9 @@ public sealed class RealRegistryProbe : IRegistryProbe
 {
     public bool KeyExists(string path)
     {
+        if (string.IsNullOrWhiteSpace(path)) return false;
         var parts = path.Replace('/', '\\').Split('\\', 2);
-        if (parts.Length < 2) return false;
+        if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1])) return false;
         var hive = parts[0].ToUpperInvariant() switch
         {
             "HKCU" => Registry.CurrentUser,
@@ -59,7 +60,7 @@ public sealed class RealRegistryProbe : IRegistryProbe
             using var key = hive.OpenSubKey(parts[1]);
             return key is not null;
         }
-        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException or ArgumentException)
         {
             return false;
         }

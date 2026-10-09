@@ -44,4 +44,30 @@ public sealed class RealLeftoverProbesTests : IDisposable
         Assert.False(probe.KeyExists(@"HKCU\Software\UpdateHelperDefinitelyMissing12345"));
         Assert.False(probe.KeyExists("not a key"));   // 不抛
     }
+
+    [Fact]
+    public void Registry_unknown_hive_returns_false()
+    {
+        Assert.False(new RealRegistryProbe().KeyExists(@"HKXX\foo"));
+    }
+
+    [Fact]
+    public void Registry_empty_subkey_is_not_hive_root()
+    {
+        Assert.False(new RealRegistryProbe().KeyExists(@"HKCU\"));
+    }
+
+    [Fact]
+    public void Registry_overlong_subkey_returns_false_not_throw()
+    {
+        Assert.False(new RealRegistryProbe().KeyExists(@"HKCU\Software\" + new string('a', 300)));
+    }
+
+    [Fact]
+    public void Registry_empty_or_null_path_returns_false_not_throw()
+    {
+        var probe = new RealRegistryProbe();
+        Assert.False(probe.KeyExists(""));
+        Assert.False(probe.KeyExists(null!));
+    }
 }
