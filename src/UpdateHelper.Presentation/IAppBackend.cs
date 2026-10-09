@@ -2,6 +2,7 @@ using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Scanning;
+using UpdateHelper.Core.Uninstall;
 using UpdateHelper.Core.Updates;
 
 namespace UpdateHelper.Presentation;
@@ -20,4 +21,7 @@ public interface IAppBackend
     Task<UpdateReport> CheckUpdatesAsync(ScanSnapshot snapshot, CancellationToken cancellationToken);
     Task<ExecuteResult> InstallAsync(JudgedUpdate update, IProgress<double>? progress, CancellationToken cancellationToken);
     IReadOnlyList<HistoryRecord> ReadHistory();
+
+    /// <summary>扫描一个软件的卸载残留（只读，不删除）。</summary>
+    IReadOnlyList<LeftoverItem> ScanLeftovers(SoftwareGroup group);
 }
