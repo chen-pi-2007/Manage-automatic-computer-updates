@@ -54,6 +54,19 @@ public sealed class LeftoverViewModelTests
     }
 
     [Fact]
+    public void Warning_maps_from_category()
+    {
+        var vm = new LeftoverViewModel([
+            Item(LeftoverType.DataDir, LeftoverCategory.Personal, false),
+            Item(LeftoverType.DataDir, LeftoverCategory.Shared, false),
+            Item(LeftoverType.InstallDir, LeftoverCategory.Owned, true),
+        ]);
+        Assert.Equal("personal", vm.Rows[0].Warning);
+        Assert.Equal("shared", vm.Rows[1].Warning);
+        Assert.Null(vm.Rows[2].Warning);
+    }
+
+    [Fact]
     public void Has_disclaimer()
     {
         Assert.Contains("做不到 100%", new LeftoverViewModel([]).DisclaimerText);

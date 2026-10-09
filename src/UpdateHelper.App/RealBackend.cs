@@ -13,7 +13,7 @@ namespace UpdateHelper.App;
 /// <summary>IAppBackend 的真实实现：组合计划 1～5 的底层。所有耗时工作都放到后台线程。</summary>
 public sealed class RealBackend(string rulesDirectory) : IAppBackend
 {
-    private ScanSnapshot? _lastSnapshot;
+    private volatile ScanSnapshot? _lastSnapshot;
 
     public Task<ScanSnapshot> ScanAsync(CancellationToken cancellationToken) => Task.Run(() =>
     {

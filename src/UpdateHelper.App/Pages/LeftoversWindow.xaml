@@ -16,9 +16,16 @@
         <TextBlock x:Name="TitleText" Grid.Row="0" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,12" />
         <TextBlock x:Name="LoadingText" Grid.Row="1" Text="正在扫描残留……" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" />
         <DataGrid x:Name="Grid" Grid.Row="1" Visibility="Collapsed" AutoGenerateColumns="False" CanUserAddRows="False"
-                  HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="False">
+                  HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="True">
             <DataGrid.Columns>
-                <DataGridCheckBoxColumn Header="选" Binding="{Binding Checked, Mode=OneWay}" Width="40" />
+                <DataGridTemplateColumn Header="选" Width="40" IsReadOnly="True">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox IsChecked="{Binding Checked, Mode=OneWay}" IsHitTestVisible="False" Focusable="False"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="类型" Binding="{Binding TypeName}" IsReadOnly="True" Width="90" />
                 <DataGridTextColumn Header="位置" Binding="{Binding Path}" IsReadOnly="True" Width="3*" />
                 <DataGridTemplateColumn Header="分类" Width="110" IsReadOnly="True">
