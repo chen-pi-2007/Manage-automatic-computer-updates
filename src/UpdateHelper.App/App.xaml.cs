@@ -50,6 +50,7 @@ public partial class App : Application
         }) { IsBackground = true }.Start();
 
         _startedAtLogin = e.Args.Contains("--login");
+        Notifier.EnsureHooked();
         Notifier.Activated += page => Dispatcher.Invoke(() => ShowWindow(page == "updates" ? typeof(Pages.UpdatesPage) : null));
 
         AppHost.Initialize();
@@ -116,7 +117,6 @@ public partial class App : Application
         if (_exitRequested) return;   // 托盘"退出"触发的关闭，ExitApp 会接着 Shutdown
         // 窗口已经在关闭中：不能再调 Close()（WPF 会抛 InvalidOperationException），直接退出
         _exitRequested = true;
-        Notifier.Uninstall();
         _tray?.Dispose();
         Shutdown();
     }
@@ -132,7 +132,6 @@ public partial class App : Application
     {
         if (_exitRequested) return;
         _exitRequested = true;
-        Notifier.Uninstall();
         _tray?.Dispose();
         _window?.Close();
         Shutdown();

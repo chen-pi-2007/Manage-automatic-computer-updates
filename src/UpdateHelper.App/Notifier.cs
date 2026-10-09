@@ -10,28 +10,26 @@ public static class Notifier
 
     private static bool _hooked;
 
+    /// <summary>启动时调用一次：挂上通知点击处理（程序在托盘里时点击通知也要能跳页面）。</summary>
+    public static void EnsureHooked()
+    {
+        if (_hooked) return;
+        ToastNotificationManagerCompat.OnActivated += e =>
+        {
+            var args = ToastArguments.Parse(e.Argument);
+            if (args.TryGetValue("page", out var page)) Activated?.Invoke(page);
+        };
+        _hooked = true;
+    }
+
     public static void Show(string title, string message)
     {
-        if (!_hooked)
-        {
-            ToastNotificationManagerCompat.OnActivated += e =>
-            {
-                var args = ToastArguments.Parse(e.Argument);
-                if (args.TryGetValue("page", out var page)) Activated?.Invoke(page);
-            };
-            _hooked = true;
-        }
+        EnsureHooked();
 
         new ToastContentBuilder()
             .AddArgument("page", "updates")
             .AddText(title)
             .AddText(message)
             .Show();
-    }
-
-    /// <summary>退出时清理，避免通知残留回调。</summary>
-    public static void Uninstall()
-    {
-        try { ToastNotificationManagerCompat.Uninstall(); } catch (Exception) { }
     }
 }
