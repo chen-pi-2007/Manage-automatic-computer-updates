@@ -20,7 +20,7 @@ public static class AppHost
     public static void Initialize()
     {
         var backend = new RealBackend(Path.Combine(AppContext.BaseDirectory, "rules"));
-        State = new AppState(backend);
+        State = new AppState(backend, firstSeen: new FirstSeenStore(FirstSeenStore.DefaultPath));
         Settings = new SettingsService(new SettingsStore(SettingsStore.DefaultPath));
         Home = new HomeViewModel(State, Settings);
         Updates = new UpdatesViewModel(State);
