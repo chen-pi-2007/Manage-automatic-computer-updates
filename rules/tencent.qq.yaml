@@ -8,3 +8,8 @@ background:
     explain: "QQ 开机自启（后台启动，不弹窗口）"
   - startup: "QQ"
     explain: "QQ 放在启动文件夹里的开机快捷方式"
+leftovers:
+  - path: "%APPDATA%\\Tencent\\QQ"
+    kind: shared          # Tencent 目录可能被多个腾讯软件共用
+  - path: "HKCU\\Software\\Tencent\\QQ"
+    kind: owned
