@@ -2,6 +2,7 @@ using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Scanning;
+using UpdateHelper.Core.Security;
 using UpdateHelper.Core.Uninstall;
 using UpdateHelper.Core.Updates;
 
@@ -56,4 +57,8 @@ public sealed class FakeBackend : IAppBackend
 
     public static JudgedUpdate Update(string name, UpdateTier tier, string reason = "小版本更新", SoftwareGroup? group = null)
         => new(new UpdateCandidate("Pkg." + name, name, null, "1.0", "1.1", [name]), group, tier, reason);
+
+    public Func<SecurityStatus> OnGetSecurityStatus { get; set; } =
+        () => new SecurityStatus(AntivirusState.Protected, "Windows Defender", "Windows Defender 正在保护", "");
+    public SecurityStatus GetSecurityStatus() => OnGetSecurityStatus();
 }

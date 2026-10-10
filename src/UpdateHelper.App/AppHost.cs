@@ -15,6 +15,7 @@ public static class AppHost
     public static SoftwareViewModel Software { get; private set; } = null!;
     public static BackgroundViewModel Background { get; private set; } = null!;
     public static HistoryViewModel History { get; private set; } = null!;
+    public static SecurityViewModel Security { get; private set; } = null!;
     public static SettingsViewModel SettingsPage { get; private set; } = null!;
 
     public static void Initialize()
@@ -27,6 +28,7 @@ public static class AppHost
         Software = new SoftwareViewModel(State);
         Background = new BackgroundViewModel(State);
         History = new HistoryViewModel(State);
+        Security = new SecurityViewModel(backend);
         SettingsPage = new SettingsViewModel(Settings);
     }
 }

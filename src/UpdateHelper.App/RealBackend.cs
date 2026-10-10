@@ -61,4 +61,17 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
             return [];
         }
     }
+
+    public SecurityStatus GetSecurityStatus()
+    {
+        try
+        {
+            var probe = new RealSecurityProbe();
+            return SecurityJudge.Evaluate(probe.QueryRegistered(), probe.QueryDefender());
+        }
+        catch (Exception)
+        {
+            return new SecurityStatus(AntivirusState.Unknown, "", "无法读取安全状态", "可以在 Windows 安全中心查看");
+        }
+    }
 }
