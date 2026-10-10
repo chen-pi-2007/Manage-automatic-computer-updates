@@ -5,6 +5,7 @@
 
   <ItemGroup>
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <PackageReference Include="System.Management" Version="9.0.0" />
   </ItemGroup>
 
 </Project>
