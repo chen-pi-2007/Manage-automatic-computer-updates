@@ -2,6 +2,7 @@ using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Scanning;
+using UpdateHelper.Core.Security;
 using UpdateHelper.Core.Uninstall;
 using UpdateHelper.Core.Updates;
 
@@ -24,4 +25,7 @@ public interface IAppBackend
 
     /// <summary>扫描一个软件的卸载残留（只读，不删除）。</summary>
     IReadOnlyList<LeftoverItem> ScanLeftovers(SoftwareGroup group);
+
+    /// <summary>查询当前的杀毒软件保护状态（只读）。</summary>
+    SecurityStatus GetSecurityStatus();
 }

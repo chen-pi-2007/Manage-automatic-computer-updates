@@ -17,6 +17,7 @@ public partial class App : Application
         ["updates"] = typeof(Pages.UpdatesPage),
         ["software"] = typeof(Pages.SoftwarePage),
         ["background"] = typeof(Pages.BackgroundPage),
+        ["security"] = typeof(Pages.SecurityPage),
         ["history"] = typeof(Pages.HistoryPage),
         ["settings"] = typeof(Pages.SettingsPage),
     };
