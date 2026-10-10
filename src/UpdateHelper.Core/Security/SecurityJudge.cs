@@ -10,9 +10,12 @@ public static class SecurityJudge
         // 1. 第三方杀软优先（它在管时 Defender 会让位）
         var thirdParty = registered.FirstOrDefault(a =>
             !string.Equals(a.DisplayName, DefenderName, StringComparison.OrdinalIgnoreCase));
+        // 第三方的真实开关状态各家编码不可靠（productState 不能当真），注册 ≠ 正在保护。
+        // 按诚实原则：只说"检测到"，不替它妄称开/关，让用户在它自己的界面确认。
         if (thirdParty is not null)
-            return new SecurityStatus(AntivirusState.Protected, thirdParty.DisplayName,
-                $"由 {thirdParty.DisplayName} 保护", "检测到第三方杀毒软件正在保护这台电脑");
+            return new SecurityStatus(AntivirusState.ThirdParty, thirdParty.DisplayName,
+                $"检测到 {thirdParty.DisplayName}",
+                "由它负责保护这台电脑；本助手不判断第三方杀毒软件的开关状态，可在它自己的界面查看");
 
         var defenderRegistered = registered.Any(a =>
             string.Equals(a.DisplayName, DefenderName, StringComparison.OrdinalIgnoreCase));

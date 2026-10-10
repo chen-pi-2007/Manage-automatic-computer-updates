@@ -22,6 +22,16 @@ public sealed class SecurityViewModelTests
     }
 
     [Fact]
+    public async Task Third_party_shows_neutral_not_green()
+    {
+        var vm = Vm(new SecurityStatus(AntivirusState.ThirdParty, "火绒安全软件", "检测到 火绒安全软件", "……"));
+        await vm.RefreshAsync();
+        Assert.Equal("检测到", vm.StateText);
+        Assert.Equal("#2B8CF0", vm.StateColor);
+        Assert.NotEqual("#3FA34D", vm.StateColor); // 不标绿"已保护"
+    }
+
+    [Fact]
     public async Task Realtime_off_shows_red()
     {
         var vm = Vm(new SecurityStatus(AntivirusState.RealTimeOff, "Windows Defender", "实时保护未开启", "……"));

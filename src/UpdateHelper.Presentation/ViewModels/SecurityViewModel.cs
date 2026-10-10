@@ -15,6 +15,7 @@ public sealed partial class SecurityViewModel(IAppBackend backend) : ObservableO
     public string StateText => _status?.State switch
     {
         AntivirusState.Protected => "已保护",
+        AntivirusState.ThirdParty => "检测到",
         AntivirusState.RealTimeOff => "未开启",
         AntivirusState.NotDetected => "未检测到",
         AntivirusState.Unknown => "未知",
@@ -24,6 +25,7 @@ public sealed partial class SecurityViewModel(IAppBackend backend) : ObservableO
     public string StateColor => _status?.State switch
     {
         AntivirusState.Protected => "#3FA34D",
+        AntivirusState.ThirdParty => "#2B8CF0",
         AntivirusState.RealTimeOff => "#D9534F",
         AntivirusState.NotDetected => "#D9534F",
         _ => "#808080",

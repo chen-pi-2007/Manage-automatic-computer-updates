@@ -5,15 +5,18 @@ namespace UpdateHelper.Core.Tests;
 public sealed class SecurityJudgeTests
 {
     private static RegisteredAntivirus Av(string name) => new(name, 0, null);
-    private static DefenderStatus Def(bool rtp) => new("Normal", rtp, rtp, "1.400", new DateTimeOffset(2026, 10, 9, 0, 0, 0, TimeSpan.Zero));
+    // 用本地正午构造，避免 LocalDateTime 格式化成日期时跨时区掉一天（UTC 午夜在 UTC- 时区会变成前一天）
+    private static DefenderStatus Def(bool rtp) => new("Normal", rtp, rtp, "1.400", new DateTimeOffset(new DateTime(2026, 10, 9, 12, 0, 0, DateTimeKind.Local)));
 
     [Fact]
-    public void Third_party_av_shown_as_protected()
+    public void Third_party_av_detected_but_not_claimed_protected()
     {
+        // 第三方：只说"检测到"，不妄称开/关，也不标绿"已保护"
         var s = SecurityJudge.Evaluate([Av("火绒安全软件")], null);
-        Assert.Equal(AntivirusState.Protected, s.State);
+        Assert.Equal(AntivirusState.ThirdParty, s.State);
         Assert.Equal("火绒安全软件", s.ProviderName);
-        Assert.Contains("由 火绒安全软件 保护", s.Headline);
+        Assert.Contains("检测到 火绒安全软件", s.Headline);
+        Assert.Contains("不判断", s.Detail);
     }
 
     [Fact]
@@ -21,7 +24,7 @@ public sealed class SecurityJudgeTests
     {
         // 同时注册了第三方和 Defender，且 Defender 没在跑：以第三方为准
         var s = SecurityJudge.Evaluate([Av("Windows Defender"), Av("卡巴斯基")], Def(false));
-        Assert.Equal(AntivirusState.Protected, s.State);
+        Assert.Equal(AntivirusState.ThirdParty, s.State);
         Assert.Equal("卡巴斯基", s.ProviderName);
     }
 
