@@ -32,6 +32,7 @@ public partial class App : Application
     private bool _exitRequested;
     private readonly DateTimeOffset _startedAt = DateTimeOffset.Now;
     private bool _startedAtLogin;
+    private DateTimeOffset? _lastRuleSyncAttempt;   // 本次运行最近一次规则同步尝试时间（内存兜底）
     private System.Windows.Threading.DispatcherTimer? _checkTimer;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -91,7 +92,11 @@ public partial class App : Application
         if (!_startedAtLogin) _ = AppHost.State.RefreshAsync();
 
         // 规则订阅：手动启动时后台静默同步一次（失败只改状态，不弹框）
-        if (!_startedAtLogin) _ = Task.Run(() => AppHost.RuleSubscription.SyncAsync());
+        if (!_startedAtLogin)
+        {
+            _lastRuleSyncAttempt = DateTimeOffset.Now;
+            _ = Task.Run(() => AppHost.RuleSubscription.SyncAsync());
+        }
 
         // 每分钟问一次 CheckSchedule 该不该检查
         _checkTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
@@ -100,14 +105,21 @@ public partial class App : Application
             if (CheckSchedule.ShouldCheck(DateTimeOffset.Now, _startedAt, _startedAtLogin,
                     AppHost.State.LastChecked, AppHost.Settings.Current, AppHost.State.IsBusy))
                 _ = AppHost.State.RefreshAsync();
-            // 规则每日同步：距上次 ≥ 24 小时才同步（读取上次时间失败则跳过本轮）
-            try
+            // 规则每日同步：整段放后台线程（只读小 JSON，不在 UI 线程解析规则）；
+            // 内存里记一次尝试时间，缓存写不进去时也不会每分钟联网
+            _ = Task.Run(async () =>
             {
-                if (RuleSyncSchedule.ShouldSync(DateTimeOffset.Now, AppHost.Backend.GetRuleSubscriptionInfo().LastSync)
-                    && !AppHost.RuleSubscription.IsBusy)
-                    _ = Task.Run(() => AppHost.RuleSubscription.SyncAsync());
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
+                try
+                {
+                    var last = _lastRuleSyncAttempt ?? AppHost.Backend.GetRuleLastSync();
+                    if (RuleSyncSchedule.ShouldSync(DateTimeOffset.Now, last))
+                    {
+                        _lastRuleSyncAttempt = DateTimeOffset.Now;
+                        await AppHost.RuleSubscription.SyncAsync();
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
+            });
         };
         _checkTimer.Start();
     }

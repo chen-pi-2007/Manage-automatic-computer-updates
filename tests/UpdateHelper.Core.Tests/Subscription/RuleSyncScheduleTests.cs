@@ -11,6 +11,9 @@ public sealed class RuleSyncScheduleTests
     [Fact] public void Within_a_day_should_not() =>
         Assert.False(RuleSyncSchedule.ShouldSync(Now, Now.AddHours(-5)));
 
+    [Fact] public void Exactly_a_day_should() =>
+        Assert.True(RuleSyncSchedule.ShouldSync(Now, Now.AddHours(-24)));
+
     [Fact] public void Over_a_day_should() =>
         Assert.True(RuleSyncSchedule.ShouldSync(Now, Now.AddHours(-25)));
 }

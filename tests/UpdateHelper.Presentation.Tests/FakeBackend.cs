@@ -65,6 +65,8 @@ public sealed class FakeBackend : IAppBackend
 
     public Func<RuleSubscriptionInfo>? OnGetRuleSubscriptionInfo { get; set; }
     public Func<SyncOutcome>? OnSyncRules { get; set; }
+    public Func<DateTimeOffset?>? OnGetRuleLastSync { get; set; }
+    public DateTimeOffset? GetRuleLastSync() => OnGetRuleLastSync?.Invoke();
     public RuleSubscriptionInfo GetRuleSubscriptionInfo() =>
         OnGetRuleSubscriptionInfo?.Invoke() ?? new RuleSubscriptionInfo("", null, 0, null, null);
     public Task<SyncOutcome> SyncRulesAsync(CancellationToken ct) =>

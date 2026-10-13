@@ -94,6 +94,9 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
         return new RuleSubscriptionInfo(RuleSubscriptionConfig.BundleUrl, version, count, state?.When, status);
     }
 
+    public DateTimeOffset? GetRuleLastSync() =>
+        new RuleCacheStore(RuleSubscriptionConfig.DefaultCacheDirectory).ReadSyncState()?.When;
+
     public Task<SyncOutcome> SyncRulesAsync(CancellationToken ct)
     {
         var svc = new RuleSyncService(new HttpDownloader(),
