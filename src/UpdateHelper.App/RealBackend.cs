@@ -82,4 +82,24 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
             return new SecurityStatus(AntivirusState.Unknown, "", "无法读取安全状态", "可以在 Windows 安全中心查看");
         }
     }
+
+    public RuleSubscriptionInfo GetRuleSubscriptionInfo()
+    {
+        var cache = new RuleCacheStore(RuleSubscriptionConfig.DefaultCacheDirectory);
+        var officialDir = OfficialRules.SelectDirectory(rulesDirectory, cache.Directory);
+        var version = OfficialRules.TryReadManifest(officialDir)?.BundleVersion;
+        var count = RuleSetLoader.Load([new RuleSource(officialDir, RuleTrust.Official)]).Rules.Count;
+        var state = cache.ReadSyncState();
+        SyncStatus? status = state is { } s && Enum.TryParse<SyncStatus>(s.Status, out var ss) ? ss : null;
+        return new RuleSubscriptionInfo(RuleSubscriptionConfig.BundleUrl, version, count, state?.When, status);
+    }
+
+    public Task<SyncOutcome> SyncRulesAsync(CancellationToken ct)
+    {
+        var svc = new RuleSyncService(new HttpDownloader(),
+            new BundleVerifier(RuleSubscriptionConfig.PublicKeyPem),
+            new RuleCacheStore(RuleSubscriptionConfig.DefaultCacheDirectory),
+            RuleSubscriptionConfig.BundleUrl, RuleSubscriptionConfig.SignatureUrl);
+        return svc.SyncAsync(ct);
+    }
 }
