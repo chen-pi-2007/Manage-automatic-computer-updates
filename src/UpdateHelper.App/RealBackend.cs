@@ -1,6 +1,7 @@
 using System.IO;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
+using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Core.Scanning;
 using UpdateHelper.Core.Security;
 using UpdateHelper.Core.Uninstall;
@@ -15,10 +16,17 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
 {
     private volatile ScanSnapshot? _lastSnapshot;
 
+    /// <summary>加载官方规则：在内置目录与在线缓存目录之间按版本择新。</summary>
+    private RuleSet LoadRules()
+    {
+        var officialDir = OfficialRules.SelectDirectory(rulesDirectory, RuleSubscriptionConfig.DefaultCacheDirectory);
+        return RuleSetLoader.Load([new RuleSource(officialDir, RuleTrust.Official)]);
+    }
+
     public Task<ScanSnapshot> ScanAsync(CancellationToken cancellationToken) => Task.Run(() =>
     {
         var scan = SystemScanner.CreateDefault().Scan();
-        var rules = RuleSetLoader.Load([new RuleSource(rulesDirectory, RuleTrust.Official)]);
+        var rules = LoadRules();
         var applied = RuleApplier.Apply(scan.Result, rules);
         var warnings = scan.Warnings.Concat(rules.Errors.Select(e => $"规则错误：{e}")).ToList();
         var snapshot = new ScanSnapshot(applied.Result, rules, applied.Explanations, warnings);
@@ -33,7 +41,7 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
 
     public Task<ExecuteResult> InstallAsync(JudgedUpdate update, IProgress<double>? progress, CancellationToken cancellationToken)
     {
-        var rules = RuleSetLoader.Load([new RuleSource(rulesDirectory, RuleTrust.Official)]);
+        var rules = LoadRules();
         var installer = new InstallerRouter(new WingetInstaller(),
             new RuleInstaller(rules, new HttpDownloader(), new AuthenticodeVerifier(), new ProcessRunner(),
                 RuleInstaller.DefaultDownloadDirectory));
