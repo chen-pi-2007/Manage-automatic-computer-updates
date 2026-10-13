@@ -75,7 +75,9 @@ public sealed class BundleVerifier(string publicKeyPem, BundleLimits? limits = n
             if (!ok) return VerifyResult.Fail(err!);
 
             // 3. manifest 与实际文件必须不多不少、sha256 一致
-            if (manifest!.Files.Count != files.Count) return VerifyResult.Fail("规则包文件数与清单不符");
+            var manifestNames = manifest!.Files.Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
+            if (manifestNames.Count != manifest.Files.Count) return VerifyResult.Fail("清单存在重复文件名");
+            if (!manifestNames.SetEquals(files.Keys)) return VerifyResult.Fail("规则包文件与清单不符");
             foreach (var mf in manifest.Files)
             {
                 if (!files.TryGetValue(mf.Name, out var data)) return VerifyResult.Fail($"清单文件缺失：{mf.Name}");

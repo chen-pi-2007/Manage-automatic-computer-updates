@@ -95,6 +95,19 @@ public sealed class BundleVerifierTests
     }
 
     [Fact]
+    public void Duplicate_manifest_name_with_unregistered_file_fails()
+    {
+        var (v, sign) = NewPair();
+        var sha = Sha256Hex(Encoding.UTF8.GetBytes("hello"));
+        // 清单把同一文件名登记两次，zip 里夹带一个未登记的 evil.yaml，数量相等也必须拒绝
+        var m = new BundleManifest(1, DateTimeOffset.UnixEpoch, 1,
+            [new ManifestFile("a.yaml", sha), new ManifestFile("a.yaml", sha)]);
+        var zip = BuildZip([("a.yaml", "hello"), ("evil.yaml", "x")], overrideManifestJson: ManifestParser.Serialize(m));
+        var r = v.Verify(zip, sign(zip));
+        Assert.False(r.Ok);
+    }
+
+    [Fact]
     public void Path_traversal_entry_rejected()
     {
         var (v, sign) = NewPair();
