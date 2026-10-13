@@ -1,0 +1,55 @@
+{
+  "bundleVersion": 1,
+  "generatedAt": "2026-10-13T04:57:46.4790389+00:00",
+  "ruleCount": 12,
+  "files": [
+    {
+      "name": "alibaba.quark.yaml",
+      "sha256": "785adb59d35538aabc545fa3c5560b9592ee3d99c630d69a4089f4b74e81e2f1"
+    },
+    {
+      "name": "baidu.netdisk.yaml",
+      "sha256": "09d8fe762af3318c4154a1e49ee3e16a9484524cc51bd0c79853579333eb9e18"
+    },
+    {
+      "name": "bytedance.douyin.yaml",
+      "sha256": "1f7926b95a126188842f35e55f0bb9a526af82f0ec790461d6462b680e494880"
+    },
+    {
+      "name": "google.chrome.yaml",
+      "sha256": "839031e5c3b4f36a11f4f2337684fd73d1c6c1ace1f4efd7c986452d48071cb8"
+    },
+    {
+      "name": "kingsoft.wps.yaml",
+      "sha256": "d962a9c26108f72892e43f9d3661b08fd8c5c2c80e10cfcddca12302d43b17f9"
+    },
+    {
+      "name": "microsoft.edge.yaml",
+      "sha256": "24af2e4e7e32a3fa4e52b1549357ff9560846a9b55ec60110e6cbade8803d7ab"
+    },
+    {
+      "name": "microsoft.onedrive.yaml",
+      "sha256": "426bc835914b0a177591675e63e399a3e8dd024b8781007defa5ae42c6436938"
+    },
+    {
+      "name": "oracle.java.yaml",
+      "sha256": "b6df905247068adee2a40c4d031d8b4ba0711d66114ff969208a5f8076a2466d"
+    },
+    {
+      "name": "tencent.meeting.yaml",
+      "sha256": "57f40acc3bf27fd2e8ecf9c957b40c3e09fa20d91c814cae1d78908b00f62e5d"
+    },
+    {
+      "name": "tencent.qq.yaml",
+      "sha256": "a402290db6b9929007ae35bd415c807898b73ea22bf2e1955ebedf95d7d6e2ef"
+    },
+    {
+      "name": "tencent.wechat.yaml",
+      "sha256": "6cacf5b5b1941cb8b6e22e00f8611296023316a46950d00ad951fedbd1375797"
+    },
+    {
+      "name": "valve.steam.yaml",
+      "sha256": "53f49eeccdc941fa80872800932be7ce2cb732929720ae025a73d6ea2b0a4c03"
+    }
+  ]
+}
