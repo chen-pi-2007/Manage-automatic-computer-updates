@@ -23,6 +23,7 @@
                 <ui:NavigationViewItem Content="我的软件" Icon="{ui:SymbolIcon Apps24}" TargetPageType="{x:Type pages:SoftwarePage}" />
                 <ui:NavigationViewItem Content="后台项目" Icon="{ui:SymbolIcon Pulse24}" TargetPageType="{x:Type pages:BackgroundPage}" />
                 <ui:NavigationViewItem Content="安全" Icon="{ui:SymbolIcon ShieldCheckmark24}" TargetPageType="{x:Type pages:SecurityPage}" />
+                <ui:NavigationViewItem Content="规则" Icon="{ui:SymbolIcon DocumentBulletList24}" TargetPageType="{x:Type pages:RulesPage}" />
                 <ui:NavigationViewItem Content="历史" Icon="{ui:SymbolIcon History24}" TargetPageType="{x:Type pages:HistoryPage}" />
             </ui:NavigationView.MenuItems>
             <ui:NavigationView.FooterMenuItems>

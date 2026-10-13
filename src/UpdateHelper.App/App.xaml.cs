@@ -1,5 +1,7 @@
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
+using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Presentation;
 using Wpf.Ui.Appearance;
 
@@ -18,6 +20,7 @@ public partial class App : Application
         ["software"] = typeof(Pages.SoftwarePage),
         ["background"] = typeof(Pages.BackgroundPage),
         ["security"] = typeof(Pages.SecurityPage),
+        ["rules"] = typeof(Pages.RulesPage),
         ["history"] = typeof(Pages.HistoryPage),
         ["settings"] = typeof(Pages.SettingsPage),
     };
@@ -87,6 +90,9 @@ public partial class App : Application
         // 手动打开就立即检查一次（含"打开才检查"模式）；开机自启(--login)则交给计时器在 5 分钟后首检，避免和开机程序抢资源
         if (!_startedAtLogin) _ = AppHost.State.RefreshAsync();
 
+        // 规则订阅：手动启动时后台静默同步一次（失败只改状态，不弹框）
+        if (!_startedAtLogin) _ = Task.Run(() => AppHost.RuleSubscription.SyncAsync());
+
         // 每分钟问一次 CheckSchedule 该不该检查
         _checkTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         _checkTimer.Tick += (_, _) =>
@@ -94,6 +100,14 @@ public partial class App : Application
             if (CheckSchedule.ShouldCheck(DateTimeOffset.Now, _startedAt, _startedAtLogin,
                     AppHost.State.LastChecked, AppHost.Settings.Current, AppHost.State.IsBusy))
                 _ = AppHost.State.RefreshAsync();
+            // 规则每日同步：距上次 ≥ 24 小时才同步（读取上次时间失败则跳过本轮）
+            try
+            {
+                if (RuleSyncSchedule.ShouldSync(DateTimeOffset.Now, AppHost.Backend.GetRuleSubscriptionInfo().LastSync)
+                    && !AppHost.RuleSubscription.IsBusy)
+                    _ = Task.Run(() => AppHost.RuleSubscription.SyncAsync());
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
         };
         _checkTimer.Start();
     }

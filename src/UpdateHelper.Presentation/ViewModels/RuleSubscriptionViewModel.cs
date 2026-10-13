@@ -8,6 +8,7 @@ public sealed partial class RuleSubscriptionViewModel(IAppBackend backend) : Obs
 {
     private RuleSubscriptionInfo? _info;
     private bool _busy;
+    private bool _readFailed;       // 读取规则状态遇到本地异常：状态回落到安全文案
     private SyncStatus? _syncStatus;   // 本次会话手动同步的结果，优先于已落盘的状态
 
     public string SourceUrl => _info?.SourceUrl ?? "";
@@ -20,7 +21,7 @@ public sealed partial class RuleSubscriptionViewModel(IAppBackend backend) : Obs
         ? $"上次同步：{t.LocalDateTime:yyyy-MM-dd HH:mm}"
         : "上次同步：尚未同步";
 
-    public string StateText => (_syncStatus ?? _info?.LastStatus) switch
+    public string StateText => _readFailed ? "无法读取规则状态，正在使用内置规则" : (_syncStatus ?? _info?.LastStatus) switch
     {
         SyncStatus.Updated => "已更新到最新",
         SyncStatus.AlreadyLatest => "已是最新",
@@ -36,9 +37,19 @@ public sealed partial class RuleSubscriptionViewModel(IAppBackend backend) : Obs
 
     public async Task RefreshAsync()
     {
-        _info = await Task.Run(backend.GetRuleSubscriptionInfo);
+        try
+        {
+            _info = await Task.Run(backend.GetRuleSubscriptionInfo);
+            _readFailed = false;
+        }
+        catch (Exception ex) when (IsLocalFailure(ex)) { _readFailed = true; }
         RaiseAll();
     }
+
+    /// <summary>读取/同步里可预期的本地失败（文件读写、规则解析）；这些都不该崩界面。</summary>
+    private static bool IsLocalFailure(Exception ex) =>
+        ex is IOException or UnauthorizedAccessException or InvalidOperationException
+            or System.Text.Json.JsonException or FormatException;
 
     public async Task SyncAsync()
     {
@@ -49,6 +60,11 @@ public sealed partial class RuleSubscriptionViewModel(IAppBackend backend) : Obs
             var outcome = await backend.SyncRulesAsync(CancellationToken.None);
             _syncStatus = outcome.Status;
             _info = await Task.Run(backend.GetRuleSubscriptionInfo);
+            _readFailed = false;
+        }
+        catch (Exception ex) when (IsLocalFailure(ex))
+        {
+            _syncStatus = SyncStatus.NetworkFailed;   // 对用户统一表述为"同步失败，继续用现有规则"
         }
         finally { IsBusy = false; }
         RaiseAll();

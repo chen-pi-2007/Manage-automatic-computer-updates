@@ -16,11 +16,14 @@ public static class AppHost
     public static BackgroundViewModel Background { get; private set; } = null!;
     public static HistoryViewModel History { get; private set; } = null!;
     public static SecurityViewModel Security { get; private set; } = null!;
+    public static RuleSubscriptionViewModel RuleSubscription { get; private set; } = null!;
+    internal static IAppBackend Backend { get; private set; } = null!;
     public static SettingsViewModel SettingsPage { get; private set; } = null!;
 
     public static void Initialize()
     {
         var backend = new RealBackend(Path.Combine(AppContext.BaseDirectory, "rules"));
+        Backend = backend;
         State = new AppState(backend, firstSeen: new FirstSeenStore(FirstSeenStore.DefaultPath));
         Settings = new SettingsService(new SettingsStore(SettingsStore.DefaultPath));
         Home = new HomeViewModel(State, Settings);
@@ -29,6 +32,7 @@ public static class AppHost
         Background = new BackgroundViewModel(State);
         History = new HistoryViewModel(State);
         Security = new SecurityViewModel(backend);
+        RuleSubscription = new RuleSubscriptionViewModel(backend);
         SettingsPage = new SettingsViewModel(Settings);
     }
 }

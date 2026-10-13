@@ -51,4 +51,27 @@ public sealed class RuleSubscriptionViewModelTests
         Assert.Contains("失败", vm.StateText);
         Assert.Contains("无法写入", vm.StateText);
     }
+
+    [Fact]
+    public async Task Refresh_failure_does_not_throw_and_shows_fallback()
+    {
+        var vm = new RuleSubscriptionViewModel(new FakeBackend
+        {
+            OnGetRuleSubscriptionInfo = () => throw new IOException("磁盘错误"),
+        });
+        await vm.RefreshAsync();
+        Assert.Contains("无法读取", vm.StateText);
+    }
+
+    [Fact]
+    public async Task Sync_failure_does_not_throw_and_releases_busy()
+    {
+        var vm = new RuleSubscriptionViewModel(new FakeBackend
+        {
+            OnSyncRules = () => throw new UnauthorizedAccessException("拒绝访问"),
+        });
+        await vm.SyncAsync();
+        Assert.False(vm.IsBusy);
+        Assert.Contains("失败", vm.StateText);
+    }
 }
