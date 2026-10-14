@@ -1,5 +1,7 @@
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
+using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Presentation;
 using Wpf.Ui.Appearance;
 
@@ -18,6 +20,7 @@ public partial class App : Application
         ["software"] = typeof(Pages.SoftwarePage),
         ["background"] = typeof(Pages.BackgroundPage),
         ["security"] = typeof(Pages.SecurityPage),
+        ["rules"] = typeof(Pages.RulesPage),
         ["history"] = typeof(Pages.HistoryPage),
         ["settings"] = typeof(Pages.SettingsPage),
     };
@@ -29,6 +32,7 @@ public partial class App : Application
     private bool _exitRequested;
     private readonly DateTimeOffset _startedAt = DateTimeOffset.Now;
     private bool _startedAtLogin;
+    private DateTimeOffset? _lastRuleSyncAttempt;   // 本次运行最近一次规则同步尝试时间（内存兜底）
     private System.Windows.Threading.DispatcherTimer? _checkTimer;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -87,6 +91,13 @@ public partial class App : Application
         // 手动打开就立即检查一次（含"打开才检查"模式）；开机自启(--login)则交给计时器在 5 分钟后首检，避免和开机程序抢资源
         if (!_startedAtLogin) _ = AppHost.State.RefreshAsync();
 
+        // 规则订阅：手动启动时后台静默同步一次（失败只改状态，不弹框）
+        if (!_startedAtLogin)
+        {
+            _lastRuleSyncAttempt = DateTimeOffset.Now;
+            _ = Task.Run(() => AppHost.RuleSubscription.SyncAsync());
+        }
+
         // 每分钟问一次 CheckSchedule 该不该检查
         _checkTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         _checkTimer.Tick += (_, _) =>
@@ -94,6 +105,21 @@ public partial class App : Application
             if (CheckSchedule.ShouldCheck(DateTimeOffset.Now, _startedAt, _startedAtLogin,
                     AppHost.State.LastChecked, AppHost.Settings.Current, AppHost.State.IsBusy))
                 _ = AppHost.State.RefreshAsync();
+            // 规则每日同步：整段放后台线程（只读小 JSON，不在 UI 线程解析规则）；
+            // 内存里记一次尝试时间，缓存写不进去时也不会每分钟联网
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var last = _lastRuleSyncAttempt ?? AppHost.Backend.GetRuleLastSync();
+                    if (RuleSyncSchedule.ShouldSync(DateTimeOffset.Now, last))
+                    {
+                        _lastRuleSyncAttempt = DateTimeOffset.Now;
+                        await AppHost.RuleSubscription.SyncAsync();
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
+            });
         };
         _checkTimer.Start();
     }

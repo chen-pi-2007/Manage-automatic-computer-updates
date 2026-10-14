@@ -1,6 +1,7 @@
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
+using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Core.Scanning;
 using UpdateHelper.Core.Security;
 using UpdateHelper.Core.Uninstall;
@@ -61,4 +62,13 @@ public sealed class FakeBackend : IAppBackend
     public Func<SecurityStatus> OnGetSecurityStatus { get; set; } =
         () => new SecurityStatus(AntivirusState.Protected, "Windows Defender", "Windows Defender 正在保护", "");
     public SecurityStatus GetSecurityStatus() => OnGetSecurityStatus();
+
+    public Func<RuleSubscriptionInfo>? OnGetRuleSubscriptionInfo { get; set; }
+    public Func<SyncOutcome>? OnSyncRules { get; set; }
+    public Func<DateTimeOffset?>? OnGetRuleLastSync { get; set; }
+    public DateTimeOffset? GetRuleLastSync() => OnGetRuleLastSync?.Invoke();
+    public RuleSubscriptionInfo GetRuleSubscriptionInfo() =>
+        OnGetRuleSubscriptionInfo?.Invoke() ?? new RuleSubscriptionInfo("", null, 0, null, null);
+    public Task<SyncOutcome> SyncRulesAsync(CancellationToken ct) =>
+        Task.FromResult(OnSyncRules?.Invoke() ?? new SyncOutcome(SyncStatus.AlreadyLatest, null, DateTimeOffset.Now, null));
 }

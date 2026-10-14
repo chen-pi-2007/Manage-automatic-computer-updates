@@ -1,6 +1,7 @@
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
+using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Core.Scanning;
 using UpdateHelper.Core.Security;
 using UpdateHelper.Core.Uninstall;
@@ -28,4 +29,12 @@ public interface IAppBackend
 
     /// <summary>查询当前的杀毒软件保护状态（只读）。</summary>
     SecurityStatus GetSecurityStatus();
+
+    /// <summary>读取规则订阅的当前状态（只读）。</summary>
+    RuleSubscriptionInfo GetRuleSubscriptionInfo();
+    /// <summary>只读上次同步时间（小 JSON，不解析规则），供每日调度轻量判断。</summary>
+    DateTimeOffset? GetRuleLastSync();
+
+    /// <summary>从官方源同步规则包；失败不抛，结果在返回值里。</summary>
+    Task<SyncOutcome> SyncRulesAsync(CancellationToken ct);
 }
