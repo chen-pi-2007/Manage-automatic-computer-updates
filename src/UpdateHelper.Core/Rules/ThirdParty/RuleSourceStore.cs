@@ -22,9 +22,9 @@ public sealed class RuleSourceStore(string configPath, string cacheRoot)
             var dto = JsonSerializer.Deserialize<ConfigDto>(File.ReadAllText(configPath), JsonOpts);
             if (dto is null) return ThirdPartyConfig.Default;
             var sources = (dto.Sources ?? [])
-                .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+                .Where(s => s is not null && !string.IsNullOrWhiteSpace(s.Url))
                 .Select(s => new ThirdPartySource(
-                    string.IsNullOrWhiteSpace(s.Id) ? SourceId.FromUrl(s.Url!) : s.Id!,
+                    SourceId.FromUrl(s!.Url!.Trim()),   // 一律由 Url 重算 Id，忽略文件里的 id（防路径穿越）
                     s.Url!.Trim(), s.Note ?? "", s.Enabled, s.AllowOverrideOfficial))
                 .ToList();
             return new ThirdPartyConfig(dto.ThirdPartyEnabled, sources);

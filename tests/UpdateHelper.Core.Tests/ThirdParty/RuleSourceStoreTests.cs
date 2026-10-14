@@ -96,4 +96,31 @@ public class RuleSourceStoreTests
             new ThirdPartySource(SourceId.FromUrl("https://x/a.yaml"), "https://x/a.yaml", "", true, false)]);
         Assert.Empty(store.BuildRuleSources(config));
     }
+
+    [Fact]
+    public void Null_source_element_does_not_throw()
+    {
+        using var dir = new TempDir();
+        var store = New(dir);
+        dir.Write("rule-sources.json", "{\"thirdPartyEnabled\":true,\"sources\":[null]}");
+
+        var read = store.Read();
+        Assert.True(read.ThirdPartyEnabled);
+        Assert.Empty(read.Sources);
+    }
+
+    [Fact]
+    public void Id_from_file_is_re_derived_from_url()
+    {
+        using var dir = new TempDir();
+        var store = New(dir);
+        const string url = "https://x/evil.yaml";
+        dir.Write("rule-sources.json",
+            "{\"thirdPartyEnabled\":true,\"sources\":[{\"id\":\"../../evil\",\"url\":\"" + url + "\",\"enabled\":true}]}");
+
+        var read = store.Read();
+        var s = Assert.Single(read.Sources);
+        Assert.Equal(SourceId.FromUrl(url), s.Id);
+        Assert.NotEqual("../../evil", s.Id);
+    }
 }
