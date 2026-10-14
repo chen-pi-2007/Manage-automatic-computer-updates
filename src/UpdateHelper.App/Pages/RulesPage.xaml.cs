@@ -25,7 +25,11 @@ public partial class RulesPage : System.Windows.Controls.Page
     private async void OnAddSource(object sender, RoutedEventArgs e) => await AppHost.RuleSources.AddSourceAsync();
 
     private async void OnGlobalToggle(object sender, RoutedEventArgs e)
-        => await AppHost.RuleSources.SetGlobalEnabledAsync(((Wpf.Ui.Controls.ToggleSwitch)sender).IsChecked == true);
+    {
+        var sw = (Wpf.Ui.Controls.ToggleSwitch)sender;
+        await AppHost.RuleSources.SetGlobalEnabledAsync(sw.IsChecked == true);
+        sw.IsChecked = AppHost.RuleSources.GlobalEnabled;   // 取消/确认后都让开关视觉与 VM 真实状态对齐
+    }
 
     private async void OnSourceToggle(object sender, RoutedEventArgs e)
     {
