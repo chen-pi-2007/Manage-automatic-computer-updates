@@ -96,6 +96,7 @@ public partial class App : Application
         {
             _lastRuleSyncAttempt = DateTimeOffset.Now;
             _ = Task.Run(() => AppHost.RuleSubscription.SyncAsync());
+            _ = Task.Run(() => AppHost.Backend.SyncThirdPartyAsync(CancellationToken.None));
         }
 
         // 每分钟问一次 CheckSchedule 该不该检查
@@ -116,6 +117,7 @@ public partial class App : Application
                     {
                         _lastRuleSyncAttempt = DateTimeOffset.Now;
                         await AppHost.RuleSubscription.SyncAsync();
+                        await AppHost.Backend.SyncThirdPartyAsync(CancellationToken.None);
                     }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
