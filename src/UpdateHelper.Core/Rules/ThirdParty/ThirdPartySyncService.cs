@@ -43,7 +43,7 @@ public sealed class ThirdPartySyncService(IDownloader downloader, RuleSourceStor
             File.WriteAllText(Path.Combine(dir, RulesFileName), text, new UTF8Encoding(false));   // 原样存
             SaveState(dir, new ThirdPartySourceState(_clock(), ThirdPartySyncStatus.Updated, count, null));
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }   // 仅真正的取消向上抛；超时（ct 未取消）按失败隔离
         catch (Exception ex)   // 网络/IO 失败：保留旧缓存，只记状态
         {
             SaveState(dir, new ThirdPartySourceState(_clock(), ThirdPartySyncStatus.NetworkFailed,

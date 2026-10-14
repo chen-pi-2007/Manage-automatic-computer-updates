@@ -83,4 +83,36 @@ public class ThirdPartySyncServiceTests
         Assert.Equal(ThirdPartySyncStatus.Empty, ThirdPartySyncService.ReadState(store, src.Id)!.Status);
         Assert.False(File.Exists(Path.Combine(store.CacheDirFor(src.Id), "rules.yaml")));
     }
+
+    // 模拟 HttpClient 超时：抛 TaskCanceledException，但调用方的 ct 并未取消
+    private sealed class TimeoutDownloader(string timeoutUrl, IDownloader inner) : IDownloader
+    {
+        public Task DownloadAsync(string url, string dest, IProgress<double>? p, CancellationToken ct)
+        {
+            if (url == timeoutUrl) throw new TaskCanceledException();
+            return inner.DownloadAsync(url, dest, p, ct);
+        }
+    }
+
+    [Fact]
+    public async Task Timeout_without_cancellation_is_isolated_not_rethrown()
+    {
+        using var dir = new TempDir();
+        var slow = "https://x/slow.yaml";
+        var good = "https://x/good.yaml";
+        var store = new RuleSourceStore(Path.Combine(dir.Path, "c.json"), Path.Combine(dir.Path, "cache"));
+        var inner = new FakeDownloader(new() { [good] = RuleYaml });
+        var svc = new ThirdPartySyncService(new TimeoutDownloader(slow, inner), store,
+            () => new DateTimeOffset(2026, 10, 14, 0, 0, 0, TimeSpan.Zero));
+        var slowSrc = Src(slow);
+        var goodSrc = Src(good);
+
+        // ① 超时不应以异常形式穿出 SyncAsync
+        await svc.SyncAsync([slowSrc, goodSrc], CancellationToken.None);
+
+        // ② 超时源记为 NetworkFailed
+        Assert.Equal(ThirdPartySyncStatus.NetworkFailed, ThirdPartySyncService.ReadState(store, slowSrc.Id)!.Status);
+        // ③ 正常源仍被同步成功，证明循环未被中断
+        Assert.Equal(ThirdPartySyncStatus.Updated, ThirdPartySyncService.ReadState(store, goodSrc.Id)!.Status);
+    }
 }
