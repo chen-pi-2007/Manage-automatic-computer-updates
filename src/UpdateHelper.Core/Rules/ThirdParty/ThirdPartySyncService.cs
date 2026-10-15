@@ -39,6 +39,12 @@ public sealed class ThirdPartySyncService(IDownloader downloader, RuleSourceStor
                 return;
             }
             var count = RuleParser.ParseAll(text, source.Url).Count(p => p.Ok);
+            if (count == 0)   // 非空但一条规则都解析不出（如 HTML 错误页）：保留上次好缓存
+            {
+                SaveState(dir, new ThirdPartySourceState(_clock(), ThirdPartySyncStatus.Empty,
+                    ReadStateInDir(dir)?.RuleCount ?? 0, "下载内容未解析出任何规则"));
+                return;
+            }
             Directory.CreateDirectory(dir);
             File.WriteAllText(Path.Combine(dir, RulesFileName), text, new UTF8Encoding(false));   // 原样存
             SaveState(dir, new ThirdPartySourceState(_clock(), ThirdPartySyncStatus.Updated, count, null));

@@ -79,4 +79,21 @@ public class RuleSourcesViewModelTests
         Assert.Single(confirm.ConfirmMessages);
         Assert.True(backend.ThirdPartyConfig.ThirdPartyEnabled);   // 取消 → 仍开
     }
+
+    [Fact]
+    public async Task Sync_is_guarded_against_reentry_and_resets_busy()
+    {
+        var (vm, backend, _) = Make();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        backend.SyncGate = gate;
+
+        var first = vm.SyncAsync();
+        Assert.True(vm.IsBusy);
+        await vm.SyncAsync();                       // 重入：应被直接挡掉
+        Assert.Equal(1, backend.SyncThirdPartyCount);
+
+        gate.SetResult();
+        await first;
+        Assert.False(vm.IsBusy);
+    }
 }

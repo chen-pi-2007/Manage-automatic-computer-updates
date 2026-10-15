@@ -85,5 +85,12 @@ public sealed class FakeBackend : IAppBackend
             : ThirdPartyConfig.Sources
                 .Select(s => new ThirdPartySourceStatus(s.Id, s.Url, s.Note, s.Enabled, s.AllowOverrideOfficial, 0, "未同步"))
                 .ToList();
-    public Task SyncThirdPartyAsync(CancellationToken ct) { SyncThirdPartyCalled = true; return Task.CompletedTask; }
+    public TaskCompletionSource? SyncGate { get; set; }
+    public int SyncThirdPartyCount { get; private set; }
+    public async Task SyncThirdPartyAsync(CancellationToken ct)
+    {
+        SyncThirdPartyCalled = true;
+        SyncThirdPartyCount++;
+        if (SyncGate is not null) await SyncGate.Task;
+    }
 }

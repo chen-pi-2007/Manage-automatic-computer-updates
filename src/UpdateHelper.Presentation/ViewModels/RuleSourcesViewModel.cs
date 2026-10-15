@@ -23,6 +23,7 @@ public sealed partial class RuleSourcesViewModel(IAppBackend backend, IConfirmSe
     [ObservableProperty] private string _newSourceUrl = "";
     [ObservableProperty] private string _newSourceNote = "";
     [ObservableProperty] private string _addError = "";
+    [ObservableProperty] private bool _isBusy;
 
     public ObservableCollection<ThirdPartySourceRow> Sources { get; } = [];
 
@@ -39,13 +40,20 @@ public sealed partial class RuleSourcesViewModel(IAppBackend backend, IConfirmSe
 
     public async Task SyncAsync()
     {
-        await backend.SyncThirdPartyAsync(CancellationToken.None);
-        await RefreshAsync();
+        if (IsBusy) return;
+        IsBusy = true;
+        try
+        {
+            await backend.SyncThirdPartyAsync(CancellationToken.None);
+            await RefreshAsync();
+        }
+        finally { IsBusy = false; }
     }
 
     [RelayCommand]
     public async Task AddSourceAsync()
     {
+        if (IsBusy) return;
         AddError = "";
         var url = (NewSourceUrl ?? "").Trim();
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps)
@@ -63,8 +71,13 @@ public sealed partial class RuleSourcesViewModel(IAppBackend backend, IConfirmSe
         backend.SaveThirdPartyConfig(config with { Sources = [.. config.Sources, added] });
         NewSourceUrl = "";
         NewSourceNote = "";
-        await backend.SyncThirdPartyAsync(CancellationToken.None);
-        await RefreshAsync();
+        IsBusy = true;
+        try
+        {
+            await backend.SyncThirdPartyAsync(CancellationToken.None);
+            await RefreshAsync();
+        }
+        finally { IsBusy = false; }
     }
 
     public async Task SetGlobalEnabledAsync(bool value)

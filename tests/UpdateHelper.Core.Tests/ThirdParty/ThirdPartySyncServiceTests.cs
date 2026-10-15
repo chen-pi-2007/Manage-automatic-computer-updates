@@ -84,6 +84,23 @@ public class ThirdPartySyncServiceTests
         Assert.False(File.Exists(Path.Combine(store.CacheDirFor(src.Id), "rules.yaml")));
     }
 
+    [Fact]
+    public async Task Non_empty_but_zero_rules_is_empty_and_keeps_old_cache()
+    {
+        using var dir = new TempDir();
+        var url = "https://x/h.yaml";
+        var (svc, store) = New(new() { [url] = "<html>oops</html>" }, dir);
+        var src = Src(url);
+        Directory.CreateDirectory(store.CacheDirFor(src.Id));
+        var rulesPath = Path.Combine(store.CacheDirFor(src.Id), "rules.yaml");
+        File.WriteAllText(rulesPath, RuleYaml);
+
+        await svc.SyncAsync([src]);
+
+        Assert.Equal(ThirdPartySyncStatus.Empty, ThirdPartySyncService.ReadState(store, src.Id)!.Status);
+        Assert.Equal(RuleYaml, File.ReadAllText(rulesPath));
+    }
+
     // 模拟 HttpClient 超时：抛 TaskCanceledException，但调用方的 ct 并未取消
     private sealed class TimeoutDownloader(string timeoutUrl, IDownloader inner) : IDownloader
     {

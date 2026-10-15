@@ -9,7 +9,7 @@ public partial class RulesPage : System.Windows.Controls.Page
         InitializeComponent();
     }
 
-    // VM 内部已兜住本地异常；重入由 VM.IsBusy 防护
+    // RuleSourcesViewModel 自带 IsBusy 重入保护（第三方同步）；订阅 VM 同理
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _ = AppHost.RuleSubscription.RefreshAsync();

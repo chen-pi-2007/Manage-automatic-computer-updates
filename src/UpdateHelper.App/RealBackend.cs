@@ -15,8 +15,15 @@ namespace UpdateHelper.App;
 /// <summary>IAppBackend 的真实实现：组合计划 1～5 的底层。所有耗时工作都放到后台线程。</summary>
 public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceStore = null) : IAppBackend
 {
-    private readonly RuleSourceStore _sourceStore =
-        sourceStore ?? new RuleSourceStore(RuleSourceStore.DefaultConfigPath, RuleSourceStore.DefaultCacheRoot);
+    // 启动兜底（spec §6.4）：创建时清理删源/改 URL 遗留的孤儿缓存（CleanOrphanCaches 内部已吞 IO/权限异常）
+    private readonly RuleSourceStore _sourceStore = InitStore(sourceStore);
+
+    private static RuleSourceStore InitStore(RuleSourceStore? given)
+    {
+        var store = given ?? new RuleSourceStore(RuleSourceStore.DefaultConfigPath, RuleSourceStore.DefaultCacheRoot);
+        store.CleanOrphanCaches(store.Read());
+        return store;
+    }
     private volatile ScanSnapshot? _lastSnapshot;
 
     /// <summary>官方规则（内置/缓存择新）+ 所有已启用的第三方源。扫描和安装共用，避免"能检测不能装"。</summary>
