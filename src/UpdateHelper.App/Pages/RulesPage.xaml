@@ -18,6 +18,46 @@
                     <TextBlock Text="{Binding SourceUrl}" Margin="0,8,0,0" Opacity="0.5" FontSize="12" TextWrapping="Wrap" />
                 </StackPanel>
             </ui:Card>
+            <TextBlock Text="第三方规则源" FontSize="20" FontWeight="SemiBold" Margin="0,24,0,8" />
+            <ui:Card DataContext="{x:Static app:AppHost.RuleSources}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:ToggleSwitch IsChecked="{Binding GlobalEnabled, Mode=OneWay}" Click="OnGlobalToggle"
+                                         Content="启用第三方规则源" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding RiskNotice}" Margin="0,8,0,0" Opacity="0.7" TextWrapping="Wrap" />
+
+                    <ItemsControl ItemsSource="{Binding Sources}" Margin="0,12,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8" Padding="12" CornerRadius="6"
+                                        Background="{DynamicResource ControlFillColorDefaultBrush}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Note}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding Url}" Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding StateText}" Opacity="0.7" FontSize="12" Margin="0,4,0,0" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                            <ui:ToggleSwitch IsChecked="{Binding Enabled, Mode=OneWay}" Click="OnSourceToggle" Content="启用" />
+                                            <ui:ToggleSwitch IsChecked="{Binding AllowOverrideOfficial, Mode=OneWay}" Click="OnOverrideToggle"
+                                                             Content="允许覆盖官方" Margin="16,0,0,0" />
+                                            <ui:Button Content="删除" Click="OnDeleteSource" Margin="16,0,0,0" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <ui:TextBox x:Name="NewUrl" PlaceholderText="https:// 规则文件地址" Width="360"
+                                    Text="{Binding NewSourceUrl, UpdateSourceTrigger=PropertyChanged}" />
+                        <ui:TextBox x:Name="NewNote" PlaceholderText="备注（可选）" Width="160" Margin="8,0,0,0"
+                                    Text="{Binding NewSourceNote, UpdateSourceTrigger=PropertyChanged}" />
+                        <ui:Button Content="添加源" Margin="8,0,0,0" Click="OnAddSource" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding AddError}" Foreground="#E53935" Margin="0,6,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </ui:Card>
             <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
                 <ui:Button Content="立即同步" Appearance="Primary" Click="OnSync" />
             </StackPanel>

@@ -92,6 +92,73 @@ public class RuleSetLoaderTests
 
         Assert.Equal("官方", set.Rules.Single(r => r.Id == "kingsoft.wps").Name);
         Assert.Equal(RuleTrust.ThirdParty, set.Rules.Single(r => r.Id == "community.extra").Trust);
-        Assert.Contains(set.Warnings, w => w.Contains("不能覆盖官方规则"));
+        Assert.Contains(set.Warnings, w => w.Contains("未开启覆盖"));
+    }
+
+    private static RuleSource Third(string dir, bool allowOverride, string name) =>
+        new(dir, RuleTrust.ThirdParty, allowOverride, SourceUrl: "https://src/" + name, SourceName: name);
+
+    [Fact]
+    public void Override_source_beats_official_with_overridden_warning()   // Review Focus 5
+    {
+        using var official = new TempDir();
+        using var third = new TempDir();
+        official.Write("wps.yaml", RuleYaml("kingsoft.wps", "官方"));
+        third.Write("wps.yaml", RuleYaml("kingsoft.wps", "第三方覆盖"));
+
+        var set = RuleSetLoader.Load([
+            new RuleSource(official.Path, RuleTrust.Official),
+            Third(third.Path, allowOverride: true, "社区源")]);
+
+        Assert.Equal("第三方覆盖", set.Rules.Single(r => r.Id == "kingsoft.wps").Name);
+        Assert.Contains(set.Warnings, w => w.Contains("覆盖") && w.Contains("社区源"));
+    }
+
+    [Fact]
+    public void Multiple_override_sources_first_added_wins()   // Review Focus 5
+    {
+        using var official = new TempDir();
+        using var a = new TempDir();
+        using var b = new TempDir();
+        official.Write("x.yaml", RuleYaml("soft.x", "官方"));
+        a.Write("x.yaml", RuleYaml("soft.x", "源A"));
+        b.Write("x.yaml", RuleYaml("soft.x", "源B"));
+
+        var set = RuleSetLoader.Load([
+            new RuleSource(official.Path, RuleTrust.Official),
+            Third(a.Path, true, "A"),    // 先添加
+            Third(b.Path, true, "B")]);  // 后添加
+
+        Assert.Equal("源A", set.Rules.Single(r => r.Id == "soft.x").Name);
+    }
+
+    [Fact]
+    public void Loaded_rule_carries_source_url_and_name()
+    {
+        using var third = new TempDir();
+        third.Write("x.yaml", RuleYaml("soft.x", "X"));
+        var set = RuleSetLoader.Load([Third(third.Path, false, "社区源")]);
+        var rule = Assert.Single(set.Rules);
+        Assert.Equal("https://src/社区源", rule.SourceUrl);
+        Assert.Equal("社区源", rule.SourceName);
+    }
+
+    [Fact]
+    public void Multi_rule_file_loads_all_rules()
+    {
+        using var dir = new TempDir();
+        dir.Write("many.yaml", """
+            id: soft.a
+            name: A
+            match:
+              displayName: "A"
+            ---
+            id: soft.b
+            name: B
+            match:
+              displayName: "B"
+            """);
+        var set = RuleSetLoader.Load([new RuleSource(dir.Path, RuleTrust.ThirdParty)]);
+        Assert.Equal(new[] { "soft.a", "soft.b" }, set.Rules.Select(r => r.Id).Order());
     }
 }

@@ -11,11 +11,11 @@ public partial class SoftwarePage : System.Windows.Controls.Page
         InitializeComponent();
     }
 
-    private void ViewLeftovers_Click(object sender, RoutedEventArgs e)
+    private async void ViewLeftovers_Click(object sender, RoutedEventArgs e)
     {
         if (SoftwareGrid.SelectedItem is not SoftwareRow row)
         {
-            System.Windows.MessageBox.Show("请先在列表里选一个软件。", "查看残留");
+            await AppHost.Confirm.InfoAsync("查看残留", "请先在列表里选一个软件。");
             return;
         }
         new LeftoversWindow(row.Group) { Owner = Window.GetWindow(this) }.ShowDialog();

@@ -1603,10 +1603,12 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
     }
 ```
 
-- [ ] **Step 2: 编译并跑全量测试**
+- [ ] **Step 2: 跑测试（Core + Presentation）**
 
-Run: `dotnet build` 然后 `dotnet test`
-Expected: 编译通过；Core + Presentation 全部测试通过（含前面各任务新增）。
+Run: `dotnet test tests/UpdateHelper.Core.Tests` 与 `dotnet test tests/UpdateHelper.Presentation.Tests`
+Expected: 两个测试项目全绿（含前面各任务新增）。
+
+> 说明：App 项目此时**还不能整体编译**——`AppHost` 仍以旧签名 `new UpdatesViewModel(State)` 调用（Task 5 已改签名），要等 Task 8 改 `AppHost` 才恢复。测试项目只依赖 Core/Presentation、不依赖 App，所以用上面两个分项目测试验证本任务；`RealBackend` 的整体编译在 Task 8 Step 6 的 `dotnet build` 一并确认。本任务只需保证 `RealBackend.cs` 自身对接口的实现正确（靠评审看 diff）。
 
 - [ ] **Step 3: 提交**
 

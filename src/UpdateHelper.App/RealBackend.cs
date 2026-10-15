@@ -2,6 +2,7 @@ using System.IO;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Rules.Subscription;
+using UpdateHelper.Core.Rules.ThirdParty;
 using UpdateHelper.Core.Scanning;
 using UpdateHelper.Core.Security;
 using UpdateHelper.Core.Uninstall;
@@ -12,15 +13,28 @@ using UpdateHelper.Winget;
 namespace UpdateHelper.App;
 
 /// <summary>IAppBackend 的真实实现：组合计划 1～5 的底层。所有耗时工作都放到后台线程。</summary>
-public sealed class RealBackend(string rulesDirectory) : IAppBackend
+public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceStore = null) : IAppBackend
 {
+    // 启动兜底（spec §6.4）：创建时清理删源/改 URL 遗留的孤儿缓存（CleanOrphanCaches 内部已吞 IO/权限异常）
+    private readonly RuleSourceStore _sourceStore = InitStore(sourceStore);
+
+    private static RuleSourceStore InitStore(RuleSourceStore? given)
+    {
+        var store = given ?? new RuleSourceStore(RuleSourceStore.DefaultConfigPath, RuleSourceStore.DefaultCacheRoot);
+        store.CleanOrphanCaches(store.Read());
+        return store;
+    }
     private volatile ScanSnapshot? _lastSnapshot;
 
-    /// <summary>加载官方规则：在内置目录与在线缓存目录之间按版本择新。</summary>
-    private RuleSet LoadRules()
+    /// <summary>官方规则（内置/缓存择新）+ 所有已启用的第三方源。扫描和安装共用，避免"能检测不能装"。</summary>
+    private RuleSet LoadRules() => RuleSetLoader.Load(BuildSources());
+
+    private IReadOnlyList<RuleSource> BuildSources()
     {
         var officialDir = OfficialRules.SelectDirectory(rulesDirectory, RuleSubscriptionConfig.DefaultCacheDirectory);
-        return RuleSetLoader.Load([new RuleSource(officialDir, RuleTrust.Official)]);
+        var sources = new List<RuleSource> { new(officialDir, RuleTrust.Official) };
+        sources.AddRange(_sourceStore.BuildRuleSources(_sourceStore.Read()));
+        return sources;
     }
 
     public Task<ScanSnapshot> ScanAsync(CancellationToken cancellationToken) => Task.Run(() =>
@@ -104,5 +118,43 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
             new RuleCacheStore(RuleSubscriptionConfig.DefaultCacheDirectory),
             RuleSubscriptionConfig.BundleUrl, RuleSubscriptionConfig.SignatureUrl);
         return svc.SyncAsync(ct);
+    }
+
+    public ThirdPartyConfig GetThirdPartyConfig() => _sourceStore.Read();
+
+    public void SaveThirdPartyConfig(ThirdPartyConfig config)
+    {
+        _sourceStore.Write(config);
+        _sourceStore.CleanOrphanCaches(config);   // 删源 / 改 URL 的残留一并清理
+    }
+
+    public IReadOnlyList<ThirdPartySourceStatus> GetThirdPartySourceStatuses()
+    {
+        var config = _sourceStore.Read();
+        var list = new List<ThirdPartySourceStatus>();
+        foreach (var s in config.Sources)
+        {
+            var state = ThirdPartySyncService.ReadState(_sourceStore, s.Id);
+            var statusText = state?.Status switch
+            {
+                ThirdPartySyncStatus.Updated => $"上次同步：{state.When.LocalDateTime:yyyy-MM-dd HH:mm}",
+                ThirdPartySyncStatus.NetworkFailed => "上次同步失败（连不上），仍用上次缓存",
+                ThirdPartySyncStatus.Empty => "源内容为空",
+                _ => "尚未同步",
+            };
+            list.Add(new ThirdPartySourceStatus(s.Id, s.Url, s.Note, s.Enabled, s.AllowOverrideOfficial,
+                state?.RuleCount ?? 0, statusText));
+        }
+        return list;
+    }
+
+    public Task SyncThirdPartyAsync(CancellationToken ct)
+    {
+        var config = _sourceStore.Read();
+        if (!config.ThirdPartyEnabled) return Task.CompletedTask;
+        var enabled = config.Sources.Where(s => s.Enabled).ToList();
+        if (enabled.Count == 0) return Task.CompletedTask;
+        var svc = new ThirdPartySyncService(new HttpDownloader(), _sourceStore);
+        return Task.Run(() => svc.SyncAsync(enabled, ct), ct);
     }
 }

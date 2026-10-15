@@ -2,6 +2,7 @@ using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Rules.Subscription;
+using UpdateHelper.Core.Rules.ThirdParty;
 using UpdateHelper.Core.Scanning;
 using UpdateHelper.Core.Security;
 using UpdateHelper.Core.Uninstall;
@@ -71,4 +72,25 @@ public sealed class FakeBackend : IAppBackend
         OnGetRuleSubscriptionInfo?.Invoke() ?? new RuleSubscriptionInfo("", null, 0, null, null);
     public Task<SyncOutcome> SyncRulesAsync(CancellationToken ct) =>
         Task.FromResult(OnSyncRules?.Invoke() ?? new SyncOutcome(SyncStatus.AlreadyLatest, null, DateTimeOffset.Now, null));
+
+    public ThirdPartyConfig ThirdPartyConfig { get; set; } = ThirdPartyConfig.Default;
+    public bool SyncThirdPartyCalled { get; private set; }
+    public List<ThirdPartySourceStatus> ThirdPartyStatuses { get; } = [];
+
+    public ThirdPartyConfig GetThirdPartyConfig() => ThirdPartyConfig;
+    public void SaveThirdPartyConfig(ThirdPartyConfig config) => ThirdPartyConfig = config;
+    public IReadOnlyList<ThirdPartySourceStatus> GetThirdPartySourceStatuses() =>
+        ThirdPartyStatuses.Count > 0
+            ? ThirdPartyStatuses
+            : ThirdPartyConfig.Sources
+                .Select(s => new ThirdPartySourceStatus(s.Id, s.Url, s.Note, s.Enabled, s.AllowOverrideOfficial, 0, "未同步"))
+                .ToList();
+    public TaskCompletionSource? SyncGate { get; set; }
+    public int SyncThirdPartyCount { get; private set; }
+    public async Task SyncThirdPartyAsync(CancellationToken ct)
+    {
+        SyncThirdPartyCalled = true;
+        SyncThirdPartyCount++;
+        if (SyncGate is not null) await SyncGate.Task;
+    }
 }
