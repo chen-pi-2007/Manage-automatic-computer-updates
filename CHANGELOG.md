@@ -2,6 +2,17 @@
 
 每个版本改了什么都记在这里，最新的在最上面。下载见 [Releases](https://github.com/chen-pi-2007/Manage-automatic-computer-updates/releases)。
 
+## 0.6.2（2026-10-16）
+
+### 新增（规则同步走国内镜像，不挂代理也能更新）
+
+- **自动镜像兜底**:同步官方规则包和第三方规则源时,**先直连 GitHub,连不上就自动换国内可达的镜像**(jsDelivr / ghfast),首个成功即用——参考 GKD 的做法,让没有代理、连不上 `raw.githubusercontent.com` 或 GitHub release 的网络也能正常更新规则
+  - raw 文件(第三方源常见):依次试 `cdn.jsdelivr.net` → `gcore.jsdelivr.net` → `ghfast.top`
+  - release 资产(官方签名规则包):走 `ghfast.top`(jsDelivr 不服务 release 资产)
+  - 每个地址有独立 8 秒超时,直连"黑洞"挂起也会及时让位给镜像,不会卡住
+  - 官方规则包始终**验签 + 逐文件校验**,走镜像绝对安全:镜像若篡改内容,验签失败会自动回退、绝不使用
+- 这一切**全自动、无需设置**;能直连 GitHub 的网络仍优先直连,只有失败才走镜像
+
 ## 0.6.1（2026-10-16）
 
 ### 修复 / 改进（第三方规则源体验）

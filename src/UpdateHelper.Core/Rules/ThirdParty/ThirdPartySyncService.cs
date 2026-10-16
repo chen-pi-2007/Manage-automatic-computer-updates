@@ -15,8 +15,9 @@ public sealed class ThirdPartySyncService(IDownloader downloader, RuleSourceStor
     public const string RulesFileName = "rules.yaml";
     private const string StateFileName = "source-state.json";
     private readonly Func<DateTimeOffset> _clock = clock ?? (() => DateTimeOffset.Now);
-    // 规则源才几 KB，给个短超时，别复用下安装包的 30 分钟：地址错/连不上要秒级失败，不让用户干等。
-    private readonly TimeSpan _timeout = perSourceTimeout is { } t && t > TimeSpan.Zero ? t : TimeSpan.FromSeconds(15);
+    // 每源总超时：作为兜底上限（真正的逐地址限时在 MirrorFallbackDownloader 里，每个镜像 8 秒）。
+    // 要能容下"直连 + 几个镜像依次尝试"的总时长，又远比下安装包的 30 分钟短，不让用户干等。
+    private readonly TimeSpan _timeout = perSourceTimeout is { } t && t > TimeSpan.Zero ? t : TimeSpan.FromSeconds(45);
 
     public async Task SyncAsync(IEnumerable<ThirdPartySource> sources, CancellationToken ct = default)
     {

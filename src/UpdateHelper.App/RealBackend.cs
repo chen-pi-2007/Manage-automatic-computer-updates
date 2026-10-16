@@ -113,7 +113,7 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
 
     public Task<SyncOutcome> SyncRulesAsync(CancellationToken ct)
     {
-        var svc = new RuleSyncService(new HttpDownloader(),
+        var svc = new RuleSyncService(new MirrorFallbackDownloader(new HttpDownloader()),
             new BundleVerifier(RuleSubscriptionConfig.PublicKeyPem),
             new RuleCacheStore(RuleSubscriptionConfig.DefaultCacheDirectory),
             RuleSubscriptionConfig.BundleUrl, RuleSubscriptionConfig.SignatureUrl);
@@ -154,13 +154,13 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
         if (!config.ThirdPartyEnabled) return Task.CompletedTask;
         var enabled = config.Sources.Where(s => s.Enabled).ToList();
         if (enabled.Count == 0) return Task.CompletedTask;
-        var svc = new ThirdPartySyncService(new HttpDownloader(), _sourceStore);
+        var svc = new ThirdPartySyncService(new MirrorFallbackDownloader(new HttpDownloader()), _sourceStore);
         return Task.Run(() => svc.SyncAsync(enabled, ct), ct);
     }
 
     public async Task<ThirdPartyTrialResult> TrySyncSourceAsync(ThirdPartySource source, CancellationToken ct)
     {
-        var svc = new ThirdPartySyncService(new HttpDownloader(), _sourceStore);
+        var svc = new ThirdPartySyncService(new MirrorFallbackDownloader(new HttpDownloader()), _sourceStore);
         await Task.Run(() => svc.SyncAsync([source], ct), ct);
         var state = ThirdPartySyncService.ReadState(_sourceStore, source.Id);
         if (state is { Status: ThirdPartySyncStatus.Updated, RuleCount: > 0 })
