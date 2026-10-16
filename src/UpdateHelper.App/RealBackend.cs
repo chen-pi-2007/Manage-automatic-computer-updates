@@ -2,8 +2,11 @@ using System.IO;
 using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
+using UpdateHelper.Core.Rules.Subscription;
+using UpdateHelper.Core.Rules.ThirdParty;
 using UpdateHelper.Core.Scanning;
 using UpdateHelper.Core.Security;
+using UpdateHelper.Core.Uninstall;
 using UpdateHelper.Core.Updates;
 using UpdateHelper.Presentation;
 using UpdateHelper.Winget;
@@ -11,7 +14,7 @@ using UpdateHelper.Winget;
 namespace UpdateHelper.App;
 
 /// <summary>IAppBackend 的真实实现：组合计划 1～5 的底层。所有耗时工作都放到后台线程。</summary>
-public sealed class RealBackend(string rulesDirectory) : IAppBackend
+public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceStore = null) : IAppBackend
 {
     private readonly AgentController _agent = new();
 
@@ -19,13 +22,37 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
     public Task<string?> EnableAgentAsync() => _agent.EnableAsync();
     public Task<string?> DisableAgentAsync() => _agent.DisableAsync();
 
+    // 启动兜底（spec §6.4）：创建时清理删源/改 URL 遗留的孤儿缓存（CleanOrphanCaches 内部已吞 IO/权限异常）
+    private readonly RuleSourceStore _sourceStore = InitStore(sourceStore);
+
+    private static RuleSourceStore InitStore(RuleSourceStore? given)
+    {
+        var store = given ?? new RuleSourceStore(RuleSourceStore.DefaultConfigPath, RuleSourceStore.DefaultCacheRoot);
+        store.CleanOrphanCaches(store.Read());
+        return store;
+    }
+    private volatile ScanSnapshot? _lastSnapshot;
+
+    /// <summary>官方规则（内置/缓存择新）+ 所有已启用的第三方源。扫描和安装共用，避免"能检测不能装"。</summary>
+    private RuleSet LoadRules() => RuleSetLoader.Load(BuildSources());
+
+    private IReadOnlyList<RuleSource> BuildSources()
+    {
+        var officialDir = OfficialRules.SelectDirectory(rulesDirectory, RuleSubscriptionConfig.DefaultCacheDirectory);
+        var sources = new List<RuleSource> { new(officialDir, RuleTrust.Official) };
+        sources.AddRange(_sourceStore.BuildRuleSources(_sourceStore.Read()));
+        return sources;
+    }
+
     public Task<ScanSnapshot> ScanAsync(CancellationToken cancellationToken) => Task.Run(() =>
     {
         var scan = SystemScanner.CreateDefault().Scan();
-        var rules = RuleSetLoader.Load([new RuleSource(rulesDirectory, RuleTrust.Official)]);
+        var rules = LoadRules();
         var applied = RuleApplier.Apply(scan.Result, rules);
         var warnings = scan.Warnings.Concat(rules.Errors.Select(e => $"规则错误：{e}")).ToList();
-        return new ScanSnapshot(applied.Result, rules, applied.Explanations, warnings);
+        var snapshot = new ScanSnapshot(applied.Result, rules, applied.Explanations, warnings);
+        _lastSnapshot = snapshot;
+        return snapshot;
     }, cancellationToken);
 
     public Task<UpdateReport> CheckUpdatesAsync(ScanSnapshot snapshot, CancellationToken cancellationToken) => Task.Run(() =>
@@ -35,7 +62,7 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
 
     public Task<ExecuteResult> InstallAsync(JudgedUpdate update, IProgress<double>? progress, CancellationToken cancellationToken)
     {
-        var rules = RuleSetLoader.Load([new RuleSource(rulesDirectory, RuleTrust.Official)]);
+        var rules = LoadRules();   // 官方 + 第三方，避免"能检测不能装"
         return Task.Run(() =>
         {
             // 启用了免确认更新：winget 更新交给后台助手（不弹确认框）；规则库更新仍在本进程（每次确认）。
@@ -53,6 +80,14 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
         }, cancellationToken);
     }
 
+    public IReadOnlyList<LeftoverItem> ScanLeftovers(UpdateHelper.Core.Grouping.SoftwareGroup group)
+    {
+        var snapshot = _lastSnapshot;   // 最近一次扫描；共用检测需要全量结果，没有则只用当前软件
+        var rule = snapshot?.Rules.Rules.FirstOrDefault(r => r.Id == group.RuleId);
+        var result = snapshot?.Result ?? new UpdateHelper.Core.Grouping.ScanResult([group], [], 1);
+        return new LeftoverScanner(new RealFileProbe(), new RealRegistryProbe()).Scan(group, rule, result);
+    }
+
     public IReadOnlyList<HistoryRecord> ReadHistory()
     {
         try
@@ -63,5 +98,97 @@ public sealed class RealBackend(string rulesDirectory) : IAppBackend
         {
             return [];
         }
+    }
+
+    public SecurityStatus GetSecurityStatus()
+    {
+        try
+        {
+            var probe = new RealSecurityProbe();
+            return SecurityJudge.Evaluate(probe.QueryRegistered(), probe.QueryDefender());
+        }
+        catch (Exception)
+        {
+            return new SecurityStatus(AntivirusState.Unknown, "", "无法读取安全状态", "可以在 Windows 安全中心查看");
+        }
+    }
+
+    public RuleSubscriptionInfo GetRuleSubscriptionInfo()
+    {
+        var cache = new RuleCacheStore(RuleSubscriptionConfig.DefaultCacheDirectory);
+        var officialDir = OfficialRules.SelectDirectory(rulesDirectory, cache.Directory);
+        var version = OfficialRules.TryReadManifest(officialDir)?.BundleVersion;
+        var count = RuleSetLoader.Load([new RuleSource(officialDir, RuleTrust.Official)]).Rules.Count;
+        var state = cache.ReadSyncState();
+        SyncStatus? status = state is { } s && Enum.TryParse<SyncStatus>(s.Status, out var ss) ? ss : null;
+        return new RuleSubscriptionInfo(RuleSubscriptionConfig.BundleUrl, version, count, state?.When, status);
+    }
+
+    public DateTimeOffset? GetRuleLastSync() =>
+        new RuleCacheStore(RuleSubscriptionConfig.DefaultCacheDirectory).ReadSyncState()?.When;
+
+    public Task<SyncOutcome> SyncRulesAsync(CancellationToken ct)
+    {
+        var svc = new RuleSyncService(new MirrorFallbackDownloader(new HttpDownloader()),
+            new BundleVerifier(RuleSubscriptionConfig.PublicKeyPem),
+            new RuleCacheStore(RuleSubscriptionConfig.DefaultCacheDirectory),
+            RuleSubscriptionConfig.BundleUrl, RuleSubscriptionConfig.SignatureUrl);
+        return svc.SyncAsync(ct);
+    }
+
+    public ThirdPartyConfig GetThirdPartyConfig() => _sourceStore.Read();
+
+    public void SaveThirdPartyConfig(ThirdPartyConfig config)
+    {
+        _sourceStore.Write(config);
+        _sourceStore.CleanOrphanCaches(config);   // 删源 / 改 URL 的残留一并清理
+    }
+
+    public IReadOnlyList<ThirdPartySourceStatus> GetThirdPartySourceStatuses()
+    {
+        var config = _sourceStore.Read();
+        var list = new List<ThirdPartySourceStatus>();
+        foreach (var s in config.Sources)
+        {
+            var state = ThirdPartySyncService.ReadState(_sourceStore, s.Id);
+            var statusText = state?.Status switch
+            {
+                ThirdPartySyncStatus.Updated => $"上次同步：{state.When.LocalDateTime:yyyy-MM-dd HH:mm}",
+                ThirdPartySyncStatus.NetworkFailed => "上次同步失败（连不上），仍用上次缓存",
+                ThirdPartySyncStatus.Empty => "源内容为空",
+                _ => "尚未同步",
+            };
+            list.Add(new ThirdPartySourceStatus(s.Id, s.Url, s.Note, s.Enabled, s.AllowOverrideOfficial,
+                state?.RuleCount ?? 0, statusText));
+        }
+        return list;
+    }
+
+    public Task SyncThirdPartyAsync(CancellationToken ct)
+    {
+        var config = _sourceStore.Read();
+        if (!config.ThirdPartyEnabled) return Task.CompletedTask;
+        var enabled = config.Sources.Where(s => s.Enabled).ToList();
+        if (enabled.Count == 0) return Task.CompletedTask;
+        var svc = new ThirdPartySyncService(new MirrorFallbackDownloader(new HttpDownloader()), _sourceStore);
+        return Task.Run(() => svc.SyncAsync(enabled, ct), ct);
+    }
+
+    public async Task<ThirdPartyTrialResult> TrySyncSourceAsync(ThirdPartySource source, CancellationToken ct)
+    {
+        var svc = new ThirdPartySyncService(new MirrorFallbackDownloader(new HttpDownloader()), _sourceStore);
+        await Task.Run(() => svc.SyncAsync([source], ct), ct);
+        var state = ThirdPartySyncService.ReadState(_sourceStore, source.Id);
+        if (state is { Status: ThirdPartySyncStatus.Updated, RuleCount: > 0 })
+            return new ThirdPartyTrialResult(true, state.RuleCount, "");
+        // 没成功：清掉这次试拉留下的缓存目录（它不在配置里，属孤儿），别留垃圾
+        _sourceStore.CleanOrphanCaches(_sourceStore.Read());
+        var msg = state?.Status switch
+        {
+            ThirdPartySyncStatus.NetworkFailed => "连不上这个地址，没有添加。请检查链接是否正确，或网络 / 代理是否正常。",
+            ThirdPartySyncStatus.Empty => "这个地址没有解析出任何规则，没有添加。请确认它是规则 YAML 文件。",
+            _ => "拉取失败，没有添加。",
+        };
+        return new ThirdPartyTrialResult(false, 0, msg);
     }
 }

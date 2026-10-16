@@ -12,6 +12,7 @@
     <RootNamespace>UpdateHelper.App</RootNamespace>
     <!-- 图标由 tools/Make-Icon.ps1 生成 -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <Version>0.6.2</Version>
     <Product>更新管理小助手</Product>
   </PropertyGroup>
 
@@ -31,6 +32,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <!-- 必须直接引用，本地 dll 才会复制到输出目录（计划 3 的结论） -->
     <PackageReference Include="Microsoft.WindowsPackageManager.ComInterop" Version="1.29.380" />
+    <PackageReference Include="Microsoft.Toolkit.Uwp.Notifications" Version="7.1.3" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,6 +46,7 @@
   <!-- 官方规则随程序发布 -->
   <ItemGroup>
     <Content Include="..\..\rules\*.yaml" Link="rules\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\rules\manifest.json" Link="rules\manifest.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

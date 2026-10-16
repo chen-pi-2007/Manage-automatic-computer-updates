@@ -1,0 +1,53 @@
+using System.Windows;
+
+namespace UpdateHelper.App.Pages;
+
+public partial class RulesPage : System.Windows.Controls.Page
+{
+    public RulesPage()
+    {
+        InitializeComponent();
+    }
+
+    // RuleSourcesViewModel 自带 IsBusy 重入保护（第三方同步）；订阅 VM 同理
+    private async void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        _ = AppHost.RuleSubscription.RefreshAsync();
+        await AppHost.RuleSources.RefreshAsync();
+    }
+
+    private async void OnSync(object sender, RoutedEventArgs e)
+    {
+        _ = AppHost.RuleSubscription.SyncAsync();
+        await AppHost.RuleSources.SyncAsync();
+    }
+
+    private async void OnAddSource(object sender, RoutedEventArgs e) => await AppHost.RuleSources.AddSourceAsync();
+
+    private async void OnGlobalToggle(object sender, RoutedEventArgs e)
+    {
+        var sw = (Wpf.Ui.Controls.ToggleSwitch)sender;
+        await AppHost.RuleSources.SetGlobalEnabledAsync(sw.IsChecked == true);
+        sw.IsChecked = AppHost.RuleSources.GlobalEnabled;   // 取消/确认后都让开关视觉与 VM 真实状态对齐
+    }
+
+    private async void OnSourceToggle(object sender, RoutedEventArgs e)
+    {
+        var sw = (Wpf.Ui.Controls.ToggleSwitch)sender;
+        if (sw.DataContext is UpdateHelper.Presentation.ViewModels.ThirdPartySourceRow row)
+            await AppHost.RuleSources.SetEnabledAsync(row, sw.IsChecked == true);
+    }
+
+    private async void OnOverrideToggle(object sender, RoutedEventArgs e)
+    {
+        var sw = (Wpf.Ui.Controls.ToggleSwitch)sender;
+        if (sw.DataContext is UpdateHelper.Presentation.ViewModels.ThirdPartySourceRow row)
+            await AppHost.RuleSources.SetOverrideAsync(row, sw.IsChecked == true);
+    }
+
+    private async void OnDeleteSource(object sender, RoutedEventArgs e)
+    {
+        if (((System.Windows.FrameworkElement)sender).DataContext is UpdateHelper.Presentation.ViewModels.ThirdPartySourceRow row)
+            await AppHost.RuleSources.DeleteAsync(row);
+    }
+}

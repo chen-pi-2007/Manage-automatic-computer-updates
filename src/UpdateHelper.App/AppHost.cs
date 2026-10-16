@@ -15,19 +15,29 @@ public static class AppHost
     public static SoftwareViewModel Software { get; private set; } = null!;
     public static BackgroundViewModel Background { get; private set; } = null!;
     public static HistoryViewModel History { get; private set; } = null!;
+    public static SecurityViewModel Security { get; private set; } = null!;
+    public static RuleSubscriptionViewModel RuleSubscription { get; private set; } = null!;
+    public static RuleSourcesViewModel RuleSources { get; private set; } = null!;
+    internal static IConfirmService Confirm { get; private set; } = null!;
+    internal static IAppBackend Backend { get; private set; } = null!;
     public static SettingsViewModel SettingsPage { get; private set; } = null!;
     public static AgentSettingsViewModel Agent { get; private set; } = null!;
 
     public static void Initialize()
     {
         var backend = new RealBackend(Path.Combine(AppContext.BaseDirectory, "rules"));
-        State = new AppState(backend);
+        Backend = backend;
+        State = new AppState(backend, firstSeen: new FirstSeenStore(FirstSeenStore.DefaultPath));
         Settings = new SettingsService(new SettingsStore(SettingsStore.DefaultPath));
         Home = new HomeViewModel(State, Settings);
-        Updates = new UpdatesViewModel(State);
+        Confirm = new WpfUiConfirmService();
+        Updates = new UpdatesViewModel(State, Confirm);
         Software = new SoftwareViewModel(State);
         Background = new BackgroundViewModel(State);
         History = new HistoryViewModel(State);
+        Security = new SecurityViewModel(backend);
+        RuleSubscription = new RuleSubscriptionViewModel(backend);
+        RuleSources = new RuleSourcesViewModel(backend, Confirm);
         SettingsPage = new SettingsViewModel(Settings);
         Agent = new AgentSettingsViewModel(backend);
         _ = Agent.RefreshAsync();   // 后台查询，不挡启动

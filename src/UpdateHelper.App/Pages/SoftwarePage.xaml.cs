@@ -1,3 +1,6 @@
+using System.Windows;
+using UpdateHelper.Presentation.ViewModels;
+
 namespace UpdateHelper.App.Pages;
 
 public partial class SoftwarePage : System.Windows.Controls.Page
@@ -6,5 +9,15 @@ public partial class SoftwarePage : System.Windows.Controls.Page
     {
         DataContext = AppHost.Software;
         InitializeComponent();
+    }
+
+    private async void ViewLeftovers_Click(object sender, RoutedEventArgs e)
+    {
+        if (SoftwareGrid.SelectedItem is not SoftwareRow row)
+        {
+            await AppHost.Confirm.InfoAsync("查看残留", "请先在列表里选一个软件。");
+            return;
+        }
+        new LeftoversWindow(row.Group) { Owner = Window.GetWindow(this) }.ShowDialog();
     }
 }

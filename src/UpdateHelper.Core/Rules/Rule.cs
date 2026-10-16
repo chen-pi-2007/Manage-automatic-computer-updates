@@ -48,4 +48,10 @@ public sealed record Rule(
     public string SourceFile { get; init; } = "";
 
     public RuleTrust Trust { get; init; } = RuleTrust.Official;
+
+    /// <summary>第三方源规则的来源 URL（官方为空）。</summary>
+    public string SourceUrl { get; init; } = "";
+
+    /// <summary>第三方源的显示名（官方为空）。</summary>
+    public string SourceName { get; init; } = "";
 }

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.RegularExpressions;
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Scanning;
@@ -22,19 +23,49 @@ public static partial class RuleParser
 
     public static ParseResult Parse(string yaml, string sourceFile)
     {
-        var errors = new List<string>();
-        void Error(string message) => errors.Add($"{sourceFile}: {message}");
-
         RuleDto? dto;
+        try { dto = Deserializer.Deserialize<RuleDto?>(yaml); }
+        catch (YamlException ex) { return SyntaxError(sourceFile, ex); }
+        return Validate(dto, sourceFile);
+    }
+
+    /// <summary>按 YAML 文档边界解析多条规则（不做字符串切分）。每个文档一个结果。</summary>
+    public static IReadOnlyList<ParseResult> ParseAll(string yaml, string sourceFile)
+    {
+        var results = new List<ParseResult>();
+        var parser = new Parser(new StringReader(yaml));
         try
         {
-            dto = Deserializer.Deserialize<RuleDto?>(yaml);
+            parser.Consume<YamlDotNet.Core.Events.StreamStart>();
+            while (parser.Accept<YamlDotNet.Core.Events.DocumentStart>(out _))
+            {
+                RuleDto? dto;
+                try { dto = Deserializer.Deserialize<RuleDto?>(parser); }
+                catch (YamlException ex)
+                {
+                    results.Add(SyntaxError(sourceFile, ex));
+                    break;   // 解析器状态已乱，无法安全续读后续文档
+                }
+                results.Add(Validate(dto, sourceFile));
+            }
         }
         catch (YamlException ex)
         {
-            Error($"YAML 格式错误（第 {ex.Start.Line} 行）：{ex.InnerException?.Message ?? ex.Message}");
-            return new ParseResult(null, errors);
+            results.Add(SyntaxError(sourceFile, ex));
         }
+
+        if (results.Count == 0)
+            results.Add(new ParseResult(null, [$"{sourceFile}: 文件是空的，没有规则"]));
+        return results;
+    }
+
+    private static ParseResult SyntaxError(string sourceFile, YamlException ex) =>
+        new(null, [$"{sourceFile}: YAML 格式错误（第 {ex.Start.Line} 行）：{ex.InnerException?.Message ?? ex.Message}"]);
+
+    private static ParseResult Validate(RuleDto? dto, string sourceFile)
+    {
+        var errors = new List<string>();
+        void Error(string message) => errors.Add($"{sourceFile}: {message}");
 
         if (dto is null)
         {

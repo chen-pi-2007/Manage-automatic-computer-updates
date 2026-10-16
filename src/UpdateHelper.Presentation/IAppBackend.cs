@@ -2,7 +2,11 @@ using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
 using UpdateHelper.Core.Rules;
+using UpdateHelper.Core.Rules.Subscription;
+using UpdateHelper.Core.Rules.ThirdParty;
 using UpdateHelper.Core.Scanning;
+using UpdateHelper.Core.Security;
+using UpdateHelper.Core.Uninstall;
 using UpdateHelper.Core.Updates;
 
 namespace UpdateHelper.Presentation;
@@ -13,6 +17,13 @@ public sealed record ScanSnapshot(
     RuleSet Rules,
     IReadOnlyDictionary<BackgroundItem, string> Explanations,
     IReadOnlyList<string> Warnings);
+
+/// <summary>第三方源在界面上要显示的状态。</summary>
+public sealed record ThirdPartySourceStatus(
+    string Id, string Url, string Note, bool Enabled, bool AllowOverrideOfficial, int RuleCount, string StatusText);
+
+/// <summary>「添加前先试拉」的结果：Ok=true 表示拉到 ≥1 条规则、可以加入；否则 Message 说明为什么没加。</summary>
+public sealed record ThirdPartyTrialResult(bool Ok, int RuleCount, string Message);
 
 /// <summary>界面使用底层的唯一入口。真实实现在 App 项目（RealBackend），测试用 FakeBackend。</summary>
 public interface IAppBackend
@@ -30,4 +41,33 @@ public interface IAppBackend
 
     /// <summary>关闭免确认更新（弹一次管理员确认框）。null = 成功，否则是中文原因。</summary>
     Task<string?> DisableAgentAsync();
+
+    /// <summary>扫描一个软件的卸载残留（只读，不删除）。</summary>
+    IReadOnlyList<LeftoverItem> ScanLeftovers(SoftwareGroup group);
+
+    /// <summary>查询当前的杀毒软件保护状态（只读）。</summary>
+    SecurityStatus GetSecurityStatus();
+
+    /// <summary>读取规则订阅的当前状态（只读）。</summary>
+    RuleSubscriptionInfo GetRuleSubscriptionInfo();
+    /// <summary>只读上次同步时间（小 JSON，不解析规则），供每日调度轻量判断。</summary>
+    DateTimeOffset? GetRuleLastSync();
+
+    /// <summary>从官方源同步规则包；失败不抛，结果在返回值里。</summary>
+    Task<SyncOutcome> SyncRulesAsync(CancellationToken ct);
+
+    /// <summary>读取第三方源配置（缺失/损坏回退默认）。</summary>
+    ThirdPartyConfig GetThirdPartyConfig();
+
+    /// <summary>保存第三方源配置，并清理不再引用的缓存目录。</summary>
+    void SaveThirdPartyConfig(ThirdPartyConfig config);
+
+    /// <summary>读取各第三方源的展示状态（规则数、上次同步结果）。</summary>
+    IReadOnlyList<ThirdPartySourceStatus> GetThirdPartySourceStatuses();
+
+    /// <summary>同步所有启用的第三方源；失败按源隔离，不抛。</summary>
+    Task SyncThirdPartyAsync(CancellationToken ct);
+
+    /// <summary>添加前先试拉一个候选源（不写入配置）：拉到 ≥1 条规则才算成功。失败不抛，原因在返回值里。</summary>
+    Task<ThirdPartyTrialResult> TrySyncSourceAsync(ThirdPartySource source, CancellationToken ct);
 }
