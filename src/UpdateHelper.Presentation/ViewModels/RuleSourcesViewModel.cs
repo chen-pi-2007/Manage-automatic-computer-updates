@@ -67,14 +67,20 @@ public sealed partial class RuleSourcesViewModel(IAppBackend backend, IConfirmSe
             AddError = "这个源已经添加过了";
             return;
         }
-        var added = new ThirdPartySource(SourceId.FromUrl(url), url, (NewSourceNote ?? "").Trim(), true, false);
-        backend.SaveThirdPartyConfig(config with { Sources = [.. config.Sources, added] });
-        NewSourceUrl = "";
-        NewSourceNote = "";
+        var candidate = new ThirdPartySource(SourceId.FromUrl(url), url, (NewSourceNote ?? "").Trim(), true, false);
         IsBusy = true;
         try
         {
-            await backend.SyncThirdPartyAsync(CancellationToken.None);
+            // 先试拉一次：拉到有效规则才真正加入，否则报错不入列（坏地址不该塞进列表让用户手动删）
+            var trial = await backend.TrySyncSourceAsync(candidate, CancellationToken.None);
+            if (!trial.Ok)
+            {
+                AddError = trial.Message;   // 保留输入框内容，方便用户改地址重试
+                return;
+            }
+            backend.SaveThirdPartyConfig(config with { Sources = [.. config.Sources, candidate] });
+            NewSourceUrl = "";
+            NewSourceNote = "";
             await RefreshAsync();
         }
         finally { IsBusy = false; }

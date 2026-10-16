@@ -6,6 +6,9 @@
       DataContext="{x:Static app:AppHost.RuleSubscription}"
       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
       Loaded="OnLoaded">
+    <Page.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Page.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24,8,40,24">
             <TextBlock Text="规则订阅" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,16" />
@@ -54,6 +57,12 @@
                         <ui:TextBox x:Name="NewNote" PlaceholderText="备注（可选）" Width="160" Margin="8,0,0,0"
                                     Text="{Binding NewSourceNote, UpdateSourceTrigger=PropertyChanged}" />
                         <ui:Button Content="添加源" Margin="8,0,0,0" Click="OnAddSource" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
+                                Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+                        <ui:ProgressRing IsIndeterminate="True" Width="18" Height="18" />
+                        <TextBlock Text="正在同步第三方规则…（连不上会在约 15 秒内返回）" Margin="8,0,0,0"
+                                   VerticalAlignment="Center" Opacity="0.8" />
                     </StackPanel>
                     <TextBlock Text="{Binding AddError}" Foreground="#E53935" Margin="0,6,0,0" TextWrapping="Wrap" />
                 </StackPanel>

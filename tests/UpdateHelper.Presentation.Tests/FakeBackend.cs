@@ -93,4 +93,14 @@ public sealed class FakeBackend : IAppBackend
         SyncThirdPartyCount++;
         if (SyncGate is not null) await SyncGate.Task;
     }
+
+    public bool TrySyncCalled { get; private set; }
+    public ThirdPartySource? LastTriedSource { get; private set; }
+    public ThirdPartyTrialResult TrialResult { get; set; } = new(true, 1, "");   // 默认试拉成功
+    public Task<ThirdPartyTrialResult> TrySyncSourceAsync(ThirdPartySource source, CancellationToken ct)
+    {
+        TrySyncCalled = true;
+        LastTriedSource = source;
+        return Task.FromResult(TrialResult);
+    }
 }

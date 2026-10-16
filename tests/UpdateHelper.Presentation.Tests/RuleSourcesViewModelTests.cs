@@ -24,17 +24,33 @@ public class RuleSourcesViewModelTests
     }
 
     [Fact]
-    public async Task Add_source_accepts_https_and_saves()
+    public async Task Add_source_trial_succeeds_then_saves()
     {
         var (vm, backend, _) = Make();
+        backend.TrialResult = new ThirdPartyTrialResult(true, 3, "");   // 试拉成功
         vm.NewSourceUrl = "https://x/rules.yaml";
         vm.NewSourceNote = "社区源";
         await vm.AddSourceAsync();
-        var s = Assert.Single(backend.ThirdPartyConfig.Sources);
+        Assert.True(backend.TrySyncCalled);                            // 添加前确实试拉了
+        var s = Assert.Single(backend.ThirdPartyConfig.Sources);       // 成功才入列
         Assert.Equal("https://x/rules.yaml", s.Url);
         Assert.True(s.Enabled);
         Assert.False(s.AllowOverrideOfficial);
-        Assert.True(backend.SyncThirdPartyCalled);
+        Assert.Equal("", vm.NewSourceUrl);                             // 成功后清空输入框
+        Assert.Equal("", vm.AddError);
+    }
+
+    [Fact]
+    public async Task Add_source_trial_fails_so_source_is_not_added_and_error_shown()
+    {
+        var (vm, backend, _) = Make();
+        backend.TrialResult = new ThirdPartyTrialResult(false, 0, "连不上这个地址，没有添加。");   // 试拉失败
+        vm.NewSourceUrl = "https://x/dead.yaml";
+        await vm.AddSourceAsync();
+        Assert.True(backend.TrySyncCalled);                            // 试拉过了
+        Assert.Empty(backend.ThirdPartyConfig.Sources);               // 坏地址没有被塞进列表
+        Assert.Contains("没有添加", vm.AddError);                       // 给了明确原因
+        Assert.Equal("https://x/dead.yaml", vm.NewSourceUrl);         // 保留输入，方便改
     }
 
     private static ThirdPartyConfig OneSource(bool enabled = true, bool allowOverride = false) =>

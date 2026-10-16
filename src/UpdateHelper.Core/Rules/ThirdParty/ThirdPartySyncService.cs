@@ -9,11 +9,14 @@ public enum ThirdPartySyncStatus { Updated, NetworkFailed, Empty }
 public sealed record ThirdPartySourceState(DateTimeOffset When, ThirdPartySyncStatus Status, int RuleCount, string? Detail);
 
 /// <summary>按源下载 YAML 到各自缓存目录（不验签），写每源状态；某源失败只跳过它并保留旧缓存。</summary>
-public sealed class ThirdPartySyncService(IDownloader downloader, RuleSourceStore store, Func<DateTimeOffset>? clock = null)
+public sealed class ThirdPartySyncService(IDownloader downloader, RuleSourceStore store,
+    Func<DateTimeOffset>? clock = null, TimeSpan? perSourceTimeout = null)
 {
     public const string RulesFileName = "rules.yaml";
     private const string StateFileName = "source-state.json";
     private readonly Func<DateTimeOffset> _clock = clock ?? (() => DateTimeOffset.Now);
+    // 规则源才几 KB，给个短超时，别复用下安装包的 30 分钟：地址错/连不上要秒级失败，不让用户干等。
+    private readonly TimeSpan _timeout = perSourceTimeout is { } t && t > TimeSpan.Zero ? t : TimeSpan.FromSeconds(15);
 
     public async Task SyncAsync(IEnumerable<ThirdPartySource> sources, CancellationToken ct = default)
     {
@@ -28,10 +31,13 @@ public sealed class ThirdPartySyncService(IDownloader downloader, RuleSourceStor
     {
         var dir = store.CacheDirFor(source.Id);
         var temp = Path.Combine(Path.GetTempPath(), "uh-tp-" + Guid.NewGuid().ToString("N") + ".yaml");
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(_timeout);
+        var token = timeoutCts.Token;
         try
         {
-            await downloader.DownloadAsync(source.Url, temp, null, ct);
-            var text = await File.ReadAllTextAsync(temp, ct);
+            await downloader.DownloadAsync(source.Url, temp, null, token);
+            var text = await File.ReadAllTextAsync(temp, token);
             if (string.IsNullOrWhiteSpace(text))
             {
                 SaveState(dir, new ThirdPartySourceState(_clock(), ThirdPartySyncStatus.Empty,
@@ -49,7 +55,12 @@ public sealed class ThirdPartySyncService(IDownloader downloader, RuleSourceStor
             File.WriteAllText(Path.Combine(dir, RulesFileName), text, new UTF8Encoding(false));   // 原样存
             SaveState(dir, new ThirdPartySourceState(_clock(), ThirdPartySyncStatus.Updated, count, null));
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }   // 仅真正的取消向上抛；超时（ct 未取消）按失败隔离
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }   // 仅真正的用户取消向上抛
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)      // 我们的短超时触发：按失败隔离、保留旧缓存
+        {
+            SaveState(dir, new ThirdPartySourceState(_clock(), ThirdPartySyncStatus.NetworkFailed,
+                ReadStateInDir(dir)?.RuleCount ?? 0, $"连接超时（{_timeout.TotalSeconds:0} 秒），仍用上次缓存"));
+        }
         catch (Exception ex)   // 网络/IO 失败：保留旧缓存，只记状态
         {
             SaveState(dir, new ThirdPartySourceState(_clock(), ThirdPartySyncStatus.NetworkFailed,

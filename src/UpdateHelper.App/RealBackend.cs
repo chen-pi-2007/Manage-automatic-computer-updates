@@ -157,4 +157,22 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
         var svc = new ThirdPartySyncService(new HttpDownloader(), _sourceStore);
         return Task.Run(() => svc.SyncAsync(enabled, ct), ct);
     }
+
+    public async Task<ThirdPartyTrialResult> TrySyncSourceAsync(ThirdPartySource source, CancellationToken ct)
+    {
+        var svc = new ThirdPartySyncService(new HttpDownloader(), _sourceStore);
+        await Task.Run(() => svc.SyncAsync([source], ct), ct);
+        var state = ThirdPartySyncService.ReadState(_sourceStore, source.Id);
+        if (state is { Status: ThirdPartySyncStatus.Updated, RuleCount: > 0 })
+            return new ThirdPartyTrialResult(true, state.RuleCount, "");
+        // 没成功：清掉这次试拉留下的缓存目录（它不在配置里，属孤儿），别留垃圾
+        _sourceStore.CleanOrphanCaches(_sourceStore.Read());
+        var msg = state?.Status switch
+        {
+            ThirdPartySyncStatus.NetworkFailed => "连不上这个地址，没有添加。请检查链接是否正确，或网络 / 代理是否正常。",
+            ThirdPartySyncStatus.Empty => "这个地址没有解析出任何规则，没有添加。请确认它是规则 YAML 文件。",
+            _ => "拉取失败，没有添加。",
+        };
+        return new ThirdPartyTrialResult(false, 0, msg);
+    }
 }

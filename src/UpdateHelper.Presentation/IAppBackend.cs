@@ -21,6 +21,9 @@ public sealed record ScanSnapshot(
 public sealed record ThirdPartySourceStatus(
     string Id, string Url, string Note, bool Enabled, bool AllowOverrideOfficial, int RuleCount, string StatusText);
 
+/// <summary>「添加前先试拉」的结果：Ok=true 表示拉到 ≥1 条规则、可以加入；否则 Message 说明为什么没加。</summary>
+public sealed record ThirdPartyTrialResult(bool Ok, int RuleCount, string Message);
+
 /// <summary>界面使用底层的唯一入口。真实实现在 App 项目（RealBackend），测试用 FakeBackend。</summary>
 public interface IAppBackend
 {
@@ -54,4 +57,7 @@ public interface IAppBackend
 
     /// <summary>同步所有启用的第三方源；失败按源隔离，不抛。</summary>
     Task SyncThirdPartyAsync(CancellationToken ct);
+
+    /// <summary>添加前先试拉一个候选源（不写入配置）：拉到 ≥1 条规则才算成功。失败不抛，原因在返回值里。</summary>
+    Task<ThirdPartyTrialResult> TrySyncSourceAsync(ThirdPartySource source, CancellationToken ct);
 }

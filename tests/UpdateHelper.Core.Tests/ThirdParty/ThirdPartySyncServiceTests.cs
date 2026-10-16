@@ -111,6 +111,50 @@ public class ThirdPartySyncServiceTests
         }
     }
 
+    // 真实挂起的下载：尊重取消令牌，超时触发时才结束
+    private sealed class HangingDownloader(string hangUrl, IDownloader inner) : IDownloader
+    {
+        public async Task DownloadAsync(string url, string dest, IProgress<double>? p, CancellationToken ct)
+        {
+            if (url == hangUrl) { await Task.Delay(TimeSpan.FromSeconds(30), ct); return; }
+            await inner.DownloadAsync(url, dest, p, ct);
+        }
+    }
+
+    [Fact]
+    public async Task Per_source_timeout_fails_fast_keeps_cache_and_reports_timeout()
+    {
+        using var dir = new TempDir();
+        var hang = "https://x/hang.yaml";
+        var good = "https://x/good.yaml";
+        var store = new RuleSourceStore(Path.Combine(dir.Path, "c.json"), Path.Combine(dir.Path, "cache"));
+        var inner = new FakeDownloader(new() { [good] = RuleYaml });
+        // 注入 150ms 的短超时，测试不必真等默认 15 秒
+        var svc = new ThirdPartySyncService(new HangingDownloader(hang, inner), store,
+            () => new DateTimeOffset(2026, 10, 14, 0, 0, 0, TimeSpan.Zero), TimeSpan.FromMilliseconds(150));
+        var hangSrc = Src(hang);
+        var goodSrc = Src(good);
+        // 给挂起源一份上次成功的缓存，验证超时不清它
+        Directory.CreateDirectory(store.CacheDirFor(hangSrc.Id));
+        var cachePath = Path.Combine(store.CacheDirFor(hangSrc.Id), "rules.yaml");
+        File.WriteAllText(cachePath, "旧缓存");
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await svc.SyncAsync([hangSrc, goodSrc], CancellationToken.None);
+        sw.Stop();
+
+        // ① 秒级失败：远早于默认 15 秒（给足余量 5 秒）
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"耗时 {sw.Elapsed} 不该接近默认超时");
+        // ② 超时源记为 NetworkFailed，说明里带“超时”
+        var state = ThirdPartySyncService.ReadState(store, hangSrc.Id)!;
+        Assert.Equal(ThirdPartySyncStatus.NetworkFailed, state.Status);
+        Assert.Contains("超时", state.Detail);
+        // ③ 旧缓存保留
+        Assert.Equal("旧缓存", File.ReadAllText(cachePath));
+        // ④ 后面的正常源仍同步成功，循环没被中断
+        Assert.Equal(ThirdPartySyncStatus.Updated, ThirdPartySyncService.ReadState(store, goodSrc.Id)!.Status);
+    }
+
     [Fact]
     public async Task Timeout_without_cancellation_is_isolated_not_rethrown()
     {
