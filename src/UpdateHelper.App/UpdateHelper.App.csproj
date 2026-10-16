@@ -49,4 +49,25 @@
     <Content Include="..\..\rules\manifest.json" Link="rules\manifest.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- 后台助手的原生启动器：构建和发布时都用 Native AOT 发布到输出目录（不能用普通 ProjectReference，那样得到的是 JIT 版）。
+       vswhere 所在目录要在 PATH 里，否则 ILCompiler 找不到 C++ 工具链（本机实测）。 -->
+  <PropertyGroup>
+    <AgentLauncherProject>$(MSBuildThisFileDirectory)..\UpdateHelper.AgentLauncher\UpdateHelper.AgentLauncher.csproj</AgentLauncherProject>
+    <VsWhereDir>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\Microsoft Visual Studio\Installer</VsWhereDir>
+  </PropertyGroup>
+
+  <Target Name="PublishAgentLauncherToOutput" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'"
+          Inputs="$(AgentLauncherProject);$(MSBuildThisFileDirectory)..\UpdateHelper.AgentLauncher\Program.cs;$(MSBuildThisFileDirectory)..\UpdateHelper.AgentLauncher\CleanEnvironment.cs"
+          Outputs="$(OutDir)UpdateHelper.AgentLauncher.exe">
+    <Exec Command="set &quot;PATH=$(VsWhereDir);%25PATH%25&quot; &amp;&amp; dotnet publish &quot;$(AgentLauncherProject)&quot; -c $(Configuration) -o &quot;$(OutDir)launcher-tmp&quot; --nologo -v q" />
+    <Copy SourceFiles="$(OutDir)launcher-tmp\UpdateHelper.AgentLauncher.exe" DestinationFolder="$(OutDir)" />
+    <RemoveDir Directories="$(OutDir)launcher-tmp" />
+  </Target>
+
+  <Target Name="PublishAgentLauncherToPublishDir" AfterTargets="Publish">
+    <Exec Command="set &quot;PATH=$(VsWhereDir);%25PATH%25&quot; &amp;&amp; dotnet publish &quot;$(AgentLauncherProject)&quot; -c $(Configuration) -o &quot;$(PublishDir)launcher-tmp&quot; --nologo -v q" />
+    <Copy SourceFiles="$(PublishDir)launcher-tmp\UpdateHelper.AgentLauncher.exe" DestinationFolder="$(PublishDir)" />
+    <RemoveDir Directories="$(PublishDir)launcher-tmp" />
+  </Target>
+
 </Project>

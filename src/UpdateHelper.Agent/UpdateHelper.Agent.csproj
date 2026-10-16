@@ -8,6 +8,8 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AssemblyName>UpdateHelper.Agent</AssemblyName>
     <RootNamespace>UpdateHelper.Agent</RootNamespace>
+    <!-- 第二层防护：关掉 .NET 启动钩子，提权进程不执行用户 DOTNET_STARTUP_HOOKS 指定的程序集 -->
+    <StartupHookSupport>false</StartupHookSupport>
   </PropertyGroup>
 
   <ItemGroup>

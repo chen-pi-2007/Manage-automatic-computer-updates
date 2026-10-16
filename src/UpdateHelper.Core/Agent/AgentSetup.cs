@@ -19,15 +19,15 @@ public enum AgentStatus
 /// <summary>启用后台助手要用到的纯逻辑：任务 XML、复制部署、状态判断。真正的注册在 Agent 的 --install 里。</summary>
 public static class AgentSetup
 {
-    public static string BuildTaskXml(string userSid, string agentExe)
+    public static string BuildTaskXml(string userSid, string launcherExe)
     {
         if (!IsValidUserSid(userSid)) throw new ArgumentException("不是有效的账户 SID", nameof(userSid));
-        var exe = SecurityElement.Escape(agentExe);
+        var exe = SecurityElement.Escape(launcherExe);
         return $"""
             <?xml version="1.0" encoding="UTF-16"?>
             <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
               <RegistrationInfo>
-                <Description>更新管理小助手的后台助手：在你点更新时以管理员身份安装，免去每次的确认框。只运行 Program Files 里的程序，不会开机自启。</Description>
+                <Description>更新管理小助手的后台助手：计划任务运行的是清理过环境的原生启动器，它再以管理员身份启动后台助手，在你点更新时安装，免去每次的确认框。只运行 Program Files 里的程序，不会开机自启。</Description>
                 <SecurityDescriptor>D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;GRGX;;;{userSid})</SecurityDescriptor>
               </RegistrationInfo>
               <Triggers />
@@ -50,7 +50,6 @@ public static class AgentSetup
               <Actions Context="Author">
                 <Exec>
                   <Command>{exe}</Command>
-                  <Arguments>--serve</Arguments>
                 </Exec>
               </Actions>
             </Task>
@@ -99,9 +98,20 @@ public static class AgentSetup
         File.WriteAllText(Path.Combine(target, AgentPaths.VersionFileName), version);
     }
 
+    /// <summary>
+    /// 启动器必须是 Native AOT 编译的原生程序（只有一个 exe）。普通编译的 .NET 启动器旁边会有 dll 和 runtimeconfig，
+    /// 它自己就会读取用户环境里的运行时配置，失去意义，所以拒绝部署。
+    /// </summary>
+    public static bool IsNativeLauncher(string directory) =>
+        File.Exists(Path.Combine(directory, AgentPaths.LauncherExeName))
+        && !File.Exists(Path.Combine(directory, "UpdateHelper.AgentLauncher.dll"))
+        && !File.Exists(Path.Combine(directory, "UpdateHelper.AgentLauncher.runtimeconfig.json"));
+
     public static AgentStatus GetStatus(string installDirectory, string expectedVersion, bool taskExists)
     {
-        var exeExists = File.Exists(Path.Combine(installDirectory, AgentPaths.AgentExeName));
+        // 有程序文件 = 后台助手和原生启动器都在；缺任一个都算坏
+        var exeExists = File.Exists(Path.Combine(installDirectory, AgentPaths.AgentExeName))
+            && File.Exists(Path.Combine(installDirectory, AgentPaths.LauncherExeName));
         if (!exeExists && !taskExists) return AgentStatus.NotEnabled;
         if (!exeExists || !taskExists) return AgentStatus.Broken;
 

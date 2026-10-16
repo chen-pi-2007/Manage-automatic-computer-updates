@@ -13,15 +13,15 @@ public sealed class AgentSetupTests : IDisposable
     [Fact]
     public void Task_xml_runs_installed_agent_as_this_user_with_highest_privileges()
     {
-        var xml = XDocument.Parse(AgentSetup.BuildTaskXml(Sid, @"C:\Program Files\UpdateHelper\UpdateHelper.Agent.exe"));
+        var xml = XDocument.Parse(AgentSetup.BuildTaskXml(Sid, @"C:\Program Files\UpdateHelper\UpdateHelper.AgentLauncher.exe"));
         XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
         string Value(string path) => xml.Descendants(ns + path).Single().Value;
 
         Assert.Equal(Sid, Value("UserId"));
         Assert.Equal("InteractiveToken", Value("LogonType"));      // 登录用户身份，不是 SYSTEM
         Assert.Equal("HighestAvailable", Value("RunLevel"));
-        Assert.Equal(@"C:\Program Files\UpdateHelper\UpdateHelper.Agent.exe", Value("Command"));
-        Assert.Equal("--serve", Value("Arguments"));
+        Assert.Equal(@"C:\Program Files\UpdateHelper\UpdateHelper.AgentLauncher.exe", Value("Command"));   // 跑的是原生启动器
+        Assert.Empty(xml.Descendants(ns + "Arguments"));           // 启动器不接受任何参数
         Assert.Equal("IgnoreNew", Value("MultipleInstancesPolicy"));
         Assert.Equal("false", Value("DisallowStartIfOnBatteries"));
         // 只有这个用户能运行（读 + 执行），管理员和 SYSTEM 完全控制
@@ -119,9 +119,29 @@ public sealed class AgentSetupTests : IDisposable
     }
 
     [Fact]
-    public void Status_is_outdated_when_version_file_missing()
+    public void Native_launcher_check()
+    {
+        Assert.False(AgentSetup.IsNativeLauncher(_dir));                                   // 没有启动器
+        File.WriteAllText(Path.Combine(_dir, AgentPaths.LauncherExeName), "x");
+        Assert.True(AgentSetup.IsNativeLauncher(_dir));                                    // 只有 exe：原生
+        File.WriteAllText(Path.Combine(_dir, "UpdateHelper.AgentLauncher.dll"), "x");
+        Assert.False(AgentSetup.IsNativeLauncher(_dir));                                   // 有 dll：是 .NET 普通编译的
+        File.Delete(Path.Combine(_dir, "UpdateHelper.AgentLauncher.dll"));
+        File.WriteAllText(Path.Combine(_dir, "UpdateHelper.AgentLauncher.runtimeconfig.json"), "{}");
+        Assert.False(AgentSetup.IsNativeLauncher(_dir));                                   // 有 runtimeconfig：同理
+    }
+
+    // "有程序文件"= 后台助手和原生启动器都在
+    private void WriteAgentFiles()
     {
         File.WriteAllText(Path.Combine(_dir, AgentPaths.AgentExeName), "x");
+        File.WriteAllText(Path.Combine(_dir, AgentPaths.LauncherExeName), "x");
+    }
+
+    [Fact]
+    public void Status_is_outdated_when_version_file_missing()
+    {
+        WriteAgentFiles();
         Assert.Equal(AgentStatus.Outdated, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: true));
     }
 
@@ -130,13 +150,18 @@ public sealed class AgentSetupTests : IDisposable
     {
         Assert.Equal(AgentStatus.NotEnabled, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: false));
 
-        File.WriteAllText(Path.Combine(_dir, AgentPaths.AgentExeName), "x");
+        WriteAgentFiles();
         File.WriteAllText(Path.Combine(_dir, AgentPaths.VersionFileName), "0.2.0");
         Assert.Equal(AgentStatus.Ready, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: true));
         Assert.Equal(AgentStatus.Outdated, AgentSetup.GetStatus(_dir, "0.3.0", taskExists: true));
         Assert.Equal(AgentStatus.Broken, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: false));   // 任务被删了
 
         File.Delete(Path.Combine(_dir, AgentPaths.AgentExeName));
-        Assert.Equal(AgentStatus.Broken, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: true));     // 程序被删了
+        Assert.Equal(AgentStatus.Broken, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: true));     // 后台助手被删了
+
+        // 只剩启动器、没有后台助手 + 任务在 → Broken
+        WriteAgentFiles();
+        File.Delete(Path.Combine(_dir, AgentPaths.LauncherExeName));
+        Assert.Equal(AgentStatus.Broken, AgentSetup.GetStatus(_dir, "0.2.0", taskExists: true));     // 启动器被删了
     }
 }

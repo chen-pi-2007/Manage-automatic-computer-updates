@@ -14,6 +14,11 @@ public static class AgentPaths
 
     public static string AgentExe => Path.Combine(InstallDirectory, AgentExeName);
 
+    /// <summary>计划任务实际运行的原生小程序：清理环境变量后再启动后台助手。</summary>
+    public const string LauncherExeName = "UpdateHelper.AgentLauncher.exe";
+
+    public static string LauncherExe => Path.Combine(InstallDirectory, LauncherExeName);
+
     public static string TaskName(string userSid) => $@"\UpdateHelper\Agent-{userSid}";
 
     public static string PipeName(string userSid) => $"UpdateHelper.Agent.{userSid}";

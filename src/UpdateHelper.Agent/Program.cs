@@ -8,7 +8,7 @@ using UpdateHelper.Winget;
 //   --serve                     由计划任务启动：在管道上等 App 的请求，空闲 2 分钟后退出
 //   --install --user-sid <SID>  由 App 以管理员身份运行一次：复制到 Program Files、注册计划任务
 //   --disable --user-sid <SID>  由 App 以管理员身份运行：删除这个用户的计划任务
-// 退出码：0 成功、2 参数不对、3 复制失败、4 计划任务操作失败、5 没有管理员权限
+// 退出码：0 成功、2 参数不对、3 复制失败、4 计划任务操作失败、5 没有管理员权限、6 程序包里没有原生启动器
 
 var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
 var elevated = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
@@ -47,9 +47,13 @@ if (args.Contains("--disable"))
 
 if (!args.Contains("--install")) return 2;
 
-// 1. 结束安装目录里正在运行的后台助手（文件被占用就复制不了）
+// 0. 程序包里必须有原生（AOT）启动器；普通编译的启动器会读取用户环境里的运行时配置，失去加固意义
+if (!AgentSetup.IsNativeLauncher(AppContext.BaseDirectory)) return 6;
+
+// 1. 结束安装目录里正在运行的后台助手和启动器（文件被占用就复制不了）
 var target = AgentPaths.InstallDirectory;
-foreach (var p in Process.GetProcessesByName("UpdateHelper.Agent"))
+foreach (var name in new[] { "UpdateHelper.Agent", "UpdateHelper.AgentLauncher" })
+foreach (var p in Process.GetProcessesByName(name))
 {
     try
     {
@@ -80,7 +84,7 @@ try
 {
     try
     {
-        File.WriteAllText(xmlFile, AgentSetup.BuildTaskXml(userSid, Path.Combine(target, AgentPaths.AgentExeName)), System.Text.Encoding.Unicode);
+        File.WriteAllText(xmlFile, AgentSetup.BuildTaskXml(userSid, Path.Combine(target, AgentPaths.LauncherExeName)), System.Text.Encoding.Unicode);
     }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
     {
