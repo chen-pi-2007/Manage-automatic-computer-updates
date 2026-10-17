@@ -1,4 +1,5 @@
 using Microsoft.Management.Deployment;
+using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Install;
 
 namespace UpdateHelper.Winget;
@@ -6,8 +7,9 @@ namespace UpdateHelper.Winget;
 /// <summary>
 /// 通过 winget 官方接口静默升级一个包。AllowHashMismatch 永远为 false（文件指纹对不上就不装）。
 /// 需要管理员权限的安装包会由 winget 弹出系统的"用户账户控制"确认框。
+/// <paramref name="agentMode"/> 为 true 时表示由提权的后台助手调用：升级前再过一道 UpgradeGuard（只升不降、范围跟随已安装）。
 /// </summary>
-public sealed class WingetInstaller : IPackageInstaller
+public sealed class WingetInstaller(bool agentMode = false) : IPackageInstaller
 {
     public string Name => "winget";
 
@@ -31,6 +33,15 @@ public sealed class WingetInstaller : IPackageInstaller
         // 后台助手以管理员身份运行：只能升级本机已经装了的软件，不能借它装新软件
         if (package.InstalledVersion is null)
             return new InstallerReport(false, false, $"{packageId} 没有安装在这台电脑上，不能升级", null);
+
+        // 提权模式下的最后一道检查：只升不降；安装范围已知时跟随已安装的，绝不由请求方把范围换成另一种
+        if (agentMode)
+        {
+            var installedScope = InstalledScope(package);
+            if (UpgradeGuard.Check(package.InstalledVersion.Version, targetVersion, scope, installedScope) is { } refused)
+                return new InstallerReport(false, false, refused, null);
+            if (installedScope is { } known) scope = known;
+        }
 
         var options = new InstallOptions
         {
@@ -66,6 +77,15 @@ public sealed class WingetInstaller : IPackageInstaller
         var detail = result.ExtendedErrorCode?.Message;
         var message = Describe(result.Status) + (string.IsNullOrWhiteSpace(detail) ? "" : $"：{detail}");
         return new InstallerReport(false, false, message, result.InstallerErrorCode);
+    }
+
+    /// <summary>读 winget 记录的已安装范围；没给出或是 Unknown 时返回 null（UpgradeGuard 不因范围拒绝）。</summary>
+    private static InstallScopeHint? InstalledScope(CatalogPackage package)
+    {
+        var raw = package.InstalledVersion?.GetMetadata(PackageVersionMetadataField.InstalledScope);
+        if (string.Equals(raw, "User", StringComparison.OrdinalIgnoreCase)) return InstallScopeHint.User;
+        if (string.Equals(raw, "Machine", StringComparison.OrdinalIgnoreCase)) return InstallScopeHint.Machine;
+        return null;
     }
 
     /// <summary>在可用版本里找指定版本；COM 列表按下标遍历。</summary>

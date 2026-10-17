@@ -22,7 +22,7 @@ string? Arg(string name)
 if (args.Contains("--serve"))
 {
     var sid = AgentPaths.CurrentUserSid();
-    var server = new AgentPipeServer(AgentPaths.PipeName(sid), new AgentRequestHandler(new WingetInstaller(), elevated, version));
+    var server = new AgentPipeServer(AgentPaths.PipeName(sid), new AgentRequestHandler(new WingetInstaller(agentMode: true), elevated, version));
     await server.RunAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
     return 0;
 }
