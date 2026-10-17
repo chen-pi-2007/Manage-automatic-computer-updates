@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
-    <Version>0.2.0</Version>
+    <!-- 全仓统一的版本号（唯一来源）：App / Agent / 启动器 / Core 都从这里取，发版只改这一处 -->
+    <Version>0.7.0</Version>
   </PropertyGroup>
 </Project>
