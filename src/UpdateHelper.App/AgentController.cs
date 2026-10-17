@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
 using UpdateHelper.Core.Agent;
 
 namespace UpdateHelper.App;
@@ -12,7 +11,8 @@ public sealed class AgentController
     private static readonly string Schtasks = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
     private readonly string _sid = AgentPaths.CurrentUserSid();
 
-    public static string Version { get; } = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
+    // App 和 Agent 都用这一个来源，保证 GetStatus 核对的版本和部署时写入的版本一致（见 AgentVersion）
+    public static string Version { get; } = AgentVersion.Current;
 
     public AgentStatus GetStatus() =>
         AgentSetup.GetStatus(AgentPaths.InstallDirectory, Version, TaskExists());

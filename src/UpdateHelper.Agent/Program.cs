@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Reflection;
 using System.Security.Principal;
 using UpdateHelper.Core.Agent;
 using UpdateHelper.Winget;
@@ -10,7 +9,7 @@ using UpdateHelper.Winget;
 //   --disable --user-sid <SID>  由 App 以管理员身份运行：删除这个用户的计划任务
 // 退出码：0 成功、2 参数不对、3 复制失败、4 计划任务操作失败、5 没有管理员权限、6 程序包里没有原生启动器
 
-var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
+var version = AgentVersion.Current;   // 和 App 侧同一个来源（见 AgentVersion），保证状态核对版本一致
 var elevated = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
 string? Arg(string name)
@@ -77,6 +76,10 @@ catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 {
     return 3;
 }
+
+// 2.5 复制后再核对一次 Program Files 里的最终副本是不是原生启动器：
+//     防止源目录（用户可写的下载目录）在第 0 步检查和这次复制之间被并发进程换成 JIT 版（TOCTOU）
+if (!AgentSetup.IsNativeLauncher(target)) return 6;
 
 // 3. 注册计划任务（XML 先写在 Program Files 里，用完删掉）
 var xmlFile = Path.Combine(target, "agent-task.xml");
