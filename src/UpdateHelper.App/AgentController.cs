@@ -41,7 +41,9 @@ public sealed class AgentController
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden,
             })!;
-            p.WaitForExit();
+            // 复制约 200 MB 到 Program Files 一般几十秒；给足 10 分钟，超时就告诉用户，不让按钮一直转
+            if (!p.WaitForExit((int)TimeSpan.FromMinutes(10).TotalMilliseconds))
+                return "后台助手 10 分钟内没有完成，请稍后在设置里查看状态，必要时重新启用";
             return p.ExitCode switch
             {
                 0 => null,
