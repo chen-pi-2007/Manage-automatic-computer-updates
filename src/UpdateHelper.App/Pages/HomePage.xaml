@@ -85,8 +85,8 @@
                 </ui:CardControl.Header>
                 <ComboBox SelectedIndex="{Binding ModeIndex}" MinWidth="160">
                     <ComboBoxItem Content="只提醒" />
-                    <ComboBoxItem Content="分级自动" />
-                    <ComboBoxItem Content="全部自动" />
+                    <ComboBoxItem Content="分级自动（待开发）" IsEnabled="False" />
+                    <ComboBoxItem Content="全部自动（待开发）" IsEnabled="False" />
                     <ComboBoxItem Content="打开才检查" />
                 </ComboBox>
             </ui:CardControl>

@@ -57,8 +57,8 @@
             <TextBlock x:Name="DisclaimerText" Opacity="0.7" Margin="0,4,0,0" TextWrapping="Wrap" />
         </StackPanel>
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <ui:Button Content="删除所选" IsEnabled="False" ToolTipService.ShowOnDisabled="True"
-                       ToolTip="删除和备份功能将在后台助手完成后提供" />
+            <ui:Button Content="删除所选（待开发）" IsEnabled="False" ToolTipService.ShowOnDisabled="True"
+                       ToolTip="残留的删除与备份功能仍在开发中，后续版本提供" />
             <ui:Button Content="关闭" Margin="8,0,0,0" IsCancel="True" Click="Close_Click" />
         </StackPanel>
     </Grid>

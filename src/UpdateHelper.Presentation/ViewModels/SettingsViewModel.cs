@@ -101,7 +101,7 @@ public sealed class SettingsViewModel : ObservableObject
 
     public string? SaveError => _settings.SaveError;
 
-    public string AutoUpdateNote => "现在会按设置的间隔自动检查更新，发现更新时通知你；自动安装（分级自动、全部自动）要等后续版本的免确认更新做好后才启用。";
+    public string AutoUpdateNote => "现在会按设置的间隔自动检查更新，发现更新时通知你。免确认更新已经可用：在下方启用后，用 winget 更新时不再弹确认框。自动安装（分级自动、全部自动）仍在开发中，暂未启用。";
 }
 
 /// <summary>强调色选项：显示名和颜色（null = 跟随系统）。</summary>
