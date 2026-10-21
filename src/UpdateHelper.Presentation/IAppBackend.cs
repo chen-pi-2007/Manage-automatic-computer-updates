@@ -25,6 +25,9 @@ public sealed record ThirdPartySourceStatus(
 /// <summary>「添加前先试拉」的结果：Ok=true 表示拉到 ≥1 条规则、可以加入；否则 Message 说明为什么没加。</summary>
 public sealed record ThirdPartyTrialResult(bool Ok, int RuleCount, string Message);
 
+/// <summary>一次卸载的结果：原生卸载程序是否运行过、残留清理结果、给用户看的中文总结。</summary>
+public sealed record UninstallOutcome(bool NativeUninstallRan, RemovalResult Removal, string Message);
+
 /// <summary>界面使用底层的唯一入口。真实实现在 App 项目（RealBackend），测试用 FakeBackend。</summary>
 public interface IAppBackend
 {
@@ -44,6 +47,15 @@ public interface IAppBackend
 
     /// <summary>扫描一个软件的卸载残留（只读，不删除）。</summary>
     IReadOnlyList<LeftoverItem> ScanLeftovers(SoftwareGroup group);
+
+    /// <summary>卸载一个软件：先运行它自带的卸载程序（找不到则跳过），再清理勾选的残留（先备份）。不抛异常，结果在返回值里。</summary>
+    Task<UninstallOutcome> UninstallAsync(SoftwareGroup group, IReadOnlyList<LeftoverItem> selected, CancellationToken ct);
+
+    /// <summary>读取残留备份清单（新的在前）。</summary>
+    IReadOnlyList<BackupManifest> ReadBackups();
+
+    /// <summary>按备份 Id 一键恢复，返回成功恢复的条数。</summary>
+    Task<int> RestoreBackupAsync(string backupId, CancellationToken ct);
 
     /// <summary>查询当前的杀毒软件保护状态（只读）。</summary>
     SecurityStatus GetSecurityStatus();

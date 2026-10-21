@@ -22,6 +22,21 @@ public sealed class AgentController
     public AgentInstaller CreateInstaller() =>
         new(Launcher, new AgentPipeClient(AgentPaths.PipeName(_sid), AgentPaths.AgentExe));
 
+    /// <summary>向后台助手发一条请求并等最终结果；没在运行就先通过计划任务拉起（只在请求还没发出时才重试）。</summary>
+    public async Task<AgentResponse> SendAsync(AgentRequest request, CancellationToken ct)
+    {
+        var client = new AgentPipeClient(AgentPaths.PipeName(_sid), AgentPaths.AgentExe);
+        try
+        {
+            return await client.SendAsync(request, null, TimeSpan.FromMilliseconds(500), ct);
+        }
+        catch (AgentUnavailableException ex) when (ex.Kind == AgentFailureKind.NotRunning && !ct.IsCancellationRequested)
+        {
+            Launcher.Start();
+            return await client.SendAsync(request, null, TimeSpan.FromSeconds(15), ct);
+        }
+    }
+
     /// <summary>弹一次管理员确认框，复制到 Program Files 并注册计划任务。null = 成功。</summary>
     public Task<string?> EnableAsync() => RunElevatedAsync("--install");
 

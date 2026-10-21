@@ -57,6 +57,29 @@ public sealed class FakeBackend : IAppBackend
     public Func<SoftwareGroup, IReadOnlyList<LeftoverItem>> OnScanLeftovers { get; set; } = _ => [];
     public IReadOnlyList<LeftoverItem> ScanLeftovers(SoftwareGroup group) => OnScanLeftovers(group);
 
+    public int UninstallCalls { get; private set; }
+    public IReadOnlyList<LeftoverItem>? LastUninstallSelected { get; private set; }
+    public SoftwareGroup? LastUninstallGroup { get; private set; }
+    public Task<UninstallOutcome> UninstallAsync(SoftwareGroup group, IReadOnlyList<LeftoverItem> selected, CancellationToken ct)
+    {
+        UninstallCalls++;
+        LastUninstallGroup = group;
+        LastUninstallSelected = selected.ToList();
+        return Task.FromResult(new UninstallOutcome(true, new RemovalResult(selected.Count, 0, [], null), "fake-outcome"));
+    }
+
+    public List<BackupManifest> Backups { get; } = [];
+    public List<string> Restored { get; } = [];
+    public int RestoreResult { get; set; } = 1;
+    public Exception? RestoreError { get; set; }
+    public IReadOnlyList<BackupManifest> ReadBackups() => Backups;
+    public Task<int> RestoreBackupAsync(string backupId, CancellationToken ct)
+    {
+        if (RestoreError is not null) throw RestoreError;
+        Restored.Add(backupId);
+        return Task.FromResult(RestoreResult);
+    }
+
     // —— 构造测试数据 ——
 
     public static UninstallEntry Entry(string name, string? version = "1.0", string? publisher = "Pub",

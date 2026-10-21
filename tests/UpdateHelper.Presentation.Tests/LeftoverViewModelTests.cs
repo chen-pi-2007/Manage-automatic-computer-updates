@@ -71,4 +71,57 @@ public sealed class LeftoverViewModelTests
     {
         Assert.Contains("做不到 100%", new LeftoverViewModel([]).DisclaimerText);
     }
+
+    [Fact]
+    public void Leftover_rows_toggle_checked_and_collect_selection()
+    {
+        var a = Item(LeftoverType.InstallDir, LeftoverCategory.Owned, true, path: @"C:");
+        var b = Item(LeftoverType.DataDir, LeftoverCategory.Personal, false, path: @"C:");
+        var c = Item(LeftoverType.RegistryKey, LeftoverCategory.Possible, false, path: @"HKCU\c");
+        var vm = new LeftoverViewModel([a, b, c]);
+
+        Assert.Equal([a], vm.SelectedItems);   // 默认只有预选项
+
+        vm.Rows[1].Checked = true;
+        vm.Rows[0].Checked = false;
+        vm.Rows[2].Checked = true;
+
+        Assert.Equal([b, c], vm.SelectedItems);
+        Assert.Equal(2, vm.SelectedCount);
+    }
+
+    [Fact]
+    public void Uninstall_note_no_longer_says_coming_soon()
+    {
+        Assert.DoesNotContain("将在后台助手完成后提供", new LeftoverViewModel([]).DisclaimerText);
+        Assert.Contains("做不到 100%", new LeftoverViewModel([]).DisclaimerText);
+    }
+
+    [Fact]
+    public async Task UninstallAsync_passes_exactly_the_checked_items_to_backend()
+    {
+        var a = Item(LeftoverType.InstallDir, LeftoverCategory.Owned, true, path: @"C:");
+        var b = Item(LeftoverType.DataDir, LeftoverCategory.Personal, false, path: @"C:");
+        var backend = new FakeBackend();
+        var vm = new LeftoverViewModel([a, b]);
+        vm.Rows[1].Checked = true;
+        vm.Rows[0].Checked = false;
+
+        var group = new UpdateHelper.Core.Grouping.SoftwareGroup { Name = "X" };
+        var outcome = await vm.UninstallAsync(backend, group, CancellationToken.None);
+
+        Assert.Equal([b], backend.LastUninstallSelected);
+        Assert.Same(group, backend.LastUninstallGroup);
+        Assert.Equal("fake-outcome", outcome.Message);
+    }
+
+    [Fact]
+    public async Task UninstallAsync_with_nothing_checked_does_not_call_backend()
+    {
+        var backend = new FakeBackend();
+        var vm = new LeftoverViewModel([Item(LeftoverType.InstallDir, LeftoverCategory.Owned, false)]);
+        var outcome = await vm.UninstallAsync(backend, new UpdateHelper.Core.Grouping.SoftwareGroup { Name = "X" }, CancellationToken.None);
+        Assert.Equal(0, backend.UninstallCalls);
+        Assert.Contains("没有勾选", outcome.Message);
+    }
 }

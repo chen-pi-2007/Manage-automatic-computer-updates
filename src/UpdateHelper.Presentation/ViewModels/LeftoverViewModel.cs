@@ -1,11 +1,22 @@
+using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Uninstall;
 
 namespace UpdateHelper.Presentation.ViewModels;
 
-/// <summary>残留表格的一行。Warning: null 无警告 / "shared" 黄 / "personal" 红（界面决定颜色）。</summary>
-public sealed record LeftoverRow(string TypeName, string Path, string CategoryName, string SizeText, bool Checked, string? Warning, string? Note);
+/// <summary>残留表格的一行。Warning: null 无警告 / "shared" 黄 / "personal" 红（界面决定颜色）。Checked 可由用户勾选切换。</summary>
+public sealed class LeftoverRow(LeftoverItem item, string typeName, string categoryName, string sizeText, string? warning)
+{
+    public LeftoverItem Item { get; } = item;
+    public string TypeName { get; } = typeName;
+    public string Path => Item.Path;
+    public string CategoryName { get; } = categoryName;
+    public string SizeText { get; } = sizeText;
+    public bool Checked { get; set; } = item.DefaultChecked;
+    public string? Warning { get; } = warning;
+    public string? Note => Item.Note;
+}
 
-/// <summary>"查看残留"对话框的界面逻辑。只读预览，不涉及删除。</summary>
+/// <summary>"查看残留 / 卸载"对话框的界面逻辑：勾选要清理的残留，收集选中项交给底层。</summary>
 public sealed class LeftoverViewModel
 {
     public LeftoverViewModel(IReadOnlyList<LeftoverItem> items)
@@ -20,12 +31,24 @@ public sealed class LeftoverViewModel
     public IReadOnlyList<LeftoverRow> Rows { get; }
     public string Summary { get; }
     public string DisclaimerText =>
-        "扫描只能尽量找全，做不到 100%。删除和备份功能将在后台助手完成后提供。";
+        "扫描只能尽量找全，做不到 100%。删除前会先备份，可在“历史”页一键恢复。";
+
+    /// <summary>当前被勾选的残留项（按表格顺序）。</summary>
+    public IReadOnlyList<LeftoverItem> SelectedItems => Rows.Where(r => r.Checked).Select(r => r.Item).ToList();
+    public int SelectedCount => Rows.Count(r => r.Checked);
+
+    /// <summary>以当前勾选的项执行卸载；一项都没勾时默认不调用底层、直接提示（allowEmpty=true 表示只运行软件自带的卸载程序）。</summary>
+    public Task<UninstallOutcome> UninstallAsync(IAppBackend backend, SoftwareGroup group, CancellationToken ct, bool allowEmpty = false)
+    {
+        var selected = SelectedItems;
+        if (selected.Count == 0 && !allowEmpty)
+            return Task.FromResult(new UninstallOutcome(false, new RemovalResult(0, 0, [], null), "没有勾选任何残留项。"));
+        return backend.UninstallAsync(group, selected, ct);
+    }
 
     private static LeftoverRow ToRow(LeftoverItem i) => new(
-        TypeName(i.Type), i.Path, CategoryName(i.Category), SizeText(i.SizeBytes), i.DefaultChecked,
-        i.Category switch { LeftoverCategory.Shared => "shared", LeftoverCategory.Personal => "personal", _ => null },
-        i.Note);
+        i, TypeName(i.Type), CategoryName(i.Category), SizeText(i.SizeBytes),
+        i.Category switch { LeftoverCategory.Shared => "shared", LeftoverCategory.Personal => "personal", _ => null });
 
     private static string TypeName(LeftoverType t) => t switch
     {

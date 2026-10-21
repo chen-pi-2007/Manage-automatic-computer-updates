@@ -19,8 +19,8 @@
                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
             <CheckBox Content="显示全部分类（游戏、运行库、驱动等）" IsChecked="{Binding ShowAll}" Margin="16,0,0,0" VerticalAlignment="Center" />
             <TextBlock Text="{Binding CountText}" VerticalAlignment="Center" Margin="16,0,0,0" Opacity="0.7" />
-            <ui:Button Content="卸载（待开发）" IsEnabled="False" Margin="16,0,0,0" ToolTipService.ShowOnDisabled="True"
-                       ToolTip="卸载功能仍在开发中，后续版本提供" />
+            <ui:Button x:Name="UninstallButton" Content="卸载" Margin="16,0,0,0" Click="Uninstall_Click"
+                       ToolTip="运行软件自带的卸载程序，并可勾选清理残留（清理前会先备份）" />
             <ui:Button x:Name="LeftoverButton" Content="查看残留" Margin="8,0,0,0" Click="ViewLeftovers_Click" />
         </StackPanel>
         <ui:DataGrid Grid.Row="2" ItemsSource="{Binding Rows}" RowHeight="{DynamicResource UhRowHeight}" AutoGenerateColumns="False" CanUserAddRows="False"

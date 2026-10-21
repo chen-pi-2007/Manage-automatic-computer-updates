@@ -8,6 +8,8 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" MaxHeight="220" />
         </Grid.RowDefinitions>
         <TextBlock Grid.Row="0" Text="历史" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,12" />
         <ui:Button Grid.Row="1" Content="刷新" Command="{Binding ReloadCommand}" Margin="0,0,0,12" />
@@ -20,6 +22,22 @@
                 <DataGridTextColumn Header="结果" Binding="{Binding Outcome}" Width="80" />
                 <DataGridTextColumn Header="说明" Binding="{Binding Message}" Width="3*" />
                 <DataGridTextColumn Header="方式" Binding="{Binding Trigger}" Width="60" />
+            </ui:DataGrid.Columns>
+        </ui:DataGrid>
+        <TextBlock Grid.Row="3" Text="卸载备份（卸载前自动备份，可一键恢复）" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,8" />
+        <ui:DataGrid Grid.Row="4" x:Name="BackupGrid" ItemsSource="{Binding Backups}" AutoGenerateColumns="False" CanUserAddRows="False"
+                     HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="True">
+            <ui:DataGrid.Columns>
+                <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="140" />
+                <DataGridTextColumn Header="软件" Binding="{Binding SoftwareName}" Width="2*" />
+                <DataGridTextColumn Header="备份项数" Binding="{Binding ItemCount}" Width="90" />
+                <DataGridTemplateColumn Header="操作" Width="120">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ui:Button Content="一键恢复" Click="Restore_Click" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
             </ui:DataGrid.Columns>
         </ui:DataGrid>
     </Grid>

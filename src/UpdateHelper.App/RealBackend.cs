@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Install;
@@ -86,6 +88,112 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
         var rule = snapshot?.Rules.Rules.FirstOrDefault(r => r.Id == group.RuleId);
         var result = snapshot?.Result ?? new UpdateHelper.Core.Grouping.ScanResult([group], [], 1);
         return new LeftoverScanner(new RealFileProbe(), new RealRegistryProbe()).Scan(group, rule, result);
+    }
+
+    private static BackupStore NewBackupStore() => new(BackupStore.DefaultRoot, () => DateTimeOffset.Now);
+    private static LeftoverRemover NewRemover() => new(new RealLeftoverMutator(), NewBackupStore(), () => DateTimeOffset.Now);
+
+    public IReadOnlyList<BackupManifest> ReadBackups()
+    {
+        try { return NewBackupStore().ReadAll(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    public Task<int> RestoreBackupAsync(string backupId, CancellationToken ct) => Task.Run(() =>
+    {
+        var manifest = NewBackupStore().Find(backupId);
+        return manifest is null ? 0 : NewRemover().Restore(manifest);
+    }, ct);
+
+    public async Task<UninstallOutcome> UninstallAsync(UpdateHelper.Core.Grouping.SoftwareGroup group,
+        IReadOnlyList<LeftoverItem> selected, CancellationToken ct)
+    {
+        var none = new RemovalResult(0, 0, [], null);
+        var viaAgent = UninstallRouting.UsesAgent(group.Primary?.Hive);
+
+        // 机器级软件要靠后台助手清残留：没启用就先说清楚，别等卸载完才发现清不了
+        if (viaAgent && selected.Count > 0)
+        {
+            AgentStatus status;
+            try { status = await Task.Run(() => _agent.GetStatus(), ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { status = AgentStatus.NotEnabled; }
+            if (status != AgentStatus.Ready)
+                return new UninstallOutcome(false, none,
+                    "这个软件是为所有用户安装的，清理它的残留需要管理员权限。请先到“设置”里启用“免确认更新”（后台助手），再回来重试。");
+        }
+
+        // 第一步：运行软件自带的卸载程序（它需要管理员时会自己弹确认框，和控制面板一样）
+        var nativeRan = false;
+        var nativeSkipped = true;
+        if (group.Primary is { } primary)
+        {
+            var command = UninstallCommandParser.Parse(primary, new RealFileProbe(), preferSilent: false);
+            if (command is not null)
+            {
+                nativeSkipped = false;
+                try
+                {
+                    using var process = Process.Start(new ProcessStartInfo(command.ExecutablePath, command.Arguments) { UseShellExecute = true });
+                    if (process is not null) await process.WaitForExitAsync(ct);
+                    nativeRan = true;
+                }
+                catch (Win32Exception ex)
+                {
+                    // 用户在确认框点了“否”或程序启动不了：软件还在，不动它的残留
+                    var why = ex.NativeErrorCode == 1223 ? "已取消卸载（在确认框里点了“否”）" : $"启动卸载程序失败：{ex.Message}";
+                    return new UninstallOutcome(false, none, why + "。没有清理残留。");
+                }
+            }
+        }
+
+        if (selected.Count == 0)
+            return new UninstallOutcome(nativeRan, none, UninstallMessages.Build(none, nativeRan, nativeSkipped));
+
+        // 第二步：清理勾选的残留
+        RemovalResult removal;
+        try
+        {
+            removal = viaAgent
+                ? await RemoveViaAgentAsync(group, selected, ct)
+                : await Task.Run(() => NewRemover().Remove(group.Name, StillPresent(selected)), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var failed = new RemovalResult(0, 0, selected.Select(i => i.Path).ToList(), null);
+            return new UninstallOutcome(nativeRan, failed, $"清理残留时出错：{ex.Message}");
+        }
+
+        var message = UninstallMessages.Build(removal, nativeRan, nativeSkipped);
+        if (viaAgent && nativeRan && removal.Removed + removal.RebootPending + removal.Failed.Count == 0)
+            message += "后台助手找不到该软件的登记信息（卸载程序可能已把它清除），所以没能清理残留。";
+        return new UninstallOutcome(nativeRan, removal, message);
+    }
+
+    /// <summary>原生卸载程序可能已经删掉了一部分：只处理还在的，免得把"已经没了"算成失败。</summary>
+    private static IReadOnlyList<LeftoverItem> StillPresent(IReadOnlyList<LeftoverItem> items)
+    {
+        var files = new RealFileProbe();
+        var registry = new RealRegistryProbe();
+        return items.Where(i => i.Type switch
+        {
+            LeftoverType.RegistryKey => registry.KeyExists(i.Path),
+            LeftoverType.InstallDir or LeftoverType.DataDir => files.DirectoryExists(i.Path),
+            LeftoverType.File => files.FileExists(i.Path),
+            _ => true,
+        }).ToList();
+    }
+
+    private async Task<RemovalResult> RemoveViaAgentAsync(UpdateHelper.Core.Grouping.SoftwareGroup group,
+        IReadOnlyList<LeftoverItem> selected, CancellationToken ct)
+    {
+        var primary = group.Primary ?? throw new InvalidOperationException("找不到该软件的卸载登记项");
+        var request = new AgentRequest(AgentProtocol.Version, AgentOp.RemoveResidue,
+            UninstallKeyName: primary.KeyName, Hive: primary.Hive, SelectedPaths: selected.Select(i => i.Path).ToList());
+        var response = await _agent.SendAsync(request, ct);
+        if (!response.Success)
+            throw new InvalidOperationException(response.ErrorMessage ?? "后台助手没有完成清理");
+        return new RemovalResult(response.RemovedCount ?? 0, response.RebootPendingCount ?? 0,
+            Enumerable.Repeat("（由后台助手处理）", response.FailedCount ?? 0).ToList(), null);
     }
 
     public IReadOnlyList<HistoryRecord> ReadHistory()

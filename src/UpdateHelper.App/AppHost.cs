@@ -34,7 +34,7 @@ public static class AppHost
         Updates = new UpdatesViewModel(State, Confirm);
         Software = new SoftwareViewModel(State);
         Background = new BackgroundViewModel(State);
-        History = new HistoryViewModel(State);
+        History = new HistoryViewModel(State, Confirm);
         Security = new SecurityViewModel(backend);
         RuleSubscription = new RuleSubscriptionViewModel(backend);
         RuleSources = new RuleSourcesViewModel(backend, Confirm);
