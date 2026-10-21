@@ -19,6 +19,44 @@ public sealed class RealLeftoverMutator : ILeftoverMutator
 
     public bool MoveToBackup(string originalPath, string storedPath) => Move(originalPath, storedPath);
 
+    public bool CopyToBackup(string originalPath, string storedPath)
+    {
+        try
+        {
+            var isDir = Directory.Exists(originalPath);
+            if (!isDir && !File.Exists(originalPath)) return false;
+            if (Directory.Exists(storedPath) || File.Exists(storedPath)) return false;
+            var parent = Path.GetDirectoryName(storedPath);
+            if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+            try
+            {
+                if (isDir) CopyDirectory(originalPath, storedPath);
+                else CopyFileShared(originalPath, storedPath);
+                return true;
+            }
+            catch (Exception ex) when (IsExpected(ex))
+            {
+                // 复制一半失败：清掉半成品，避免恢复时误用
+                try
+                {
+                    if (Directory.Exists(storedPath)) Directory.Delete(storedPath, true);
+                    else if (File.Exists(storedPath)) File.Delete(storedPath);
+                }
+                catch (Exception ex2) when (IsExpected(ex2)) { }
+                return false;
+            }
+        }
+        catch (Exception ex) when (IsExpected(ex)) { return false; }
+    }
+
+    /// <summary>以共享读写方式打开源文件复制，被其它进程占用但允许共享读取的文件也能复制。</summary>
+    private static void CopyFileShared(string from, string to)
+    {
+        using var src = new FileStream(from, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var dst = new FileStream(to, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        src.CopyTo(dst);
+    }
+
     public bool MoveBack(string storedPath, string originalPath) => Move(storedPath, originalPath);
 
     private static bool Move(string from, string to)
@@ -72,7 +110,7 @@ public sealed class RealLeftoverMutator : ILeftoverMutator
     {
         Directory.CreateDirectory(to);
         foreach (var f in Directory.GetFiles(from))
-            File.Copy(f, Path.Combine(to, Path.GetFileName(f)));
+            CopyFileShared(f, Path.Combine(to, Path.GetFileName(f)));
         foreach (var d in Directory.GetDirectories(from))
             CopyDirectory(d, Path.Combine(to, Path.GetFileName(d)));
     }

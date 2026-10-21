@@ -6,6 +6,9 @@ public interface ILeftoverMutator
     /// <summary>把文件/目录移动到隔离区。成功返回 true。</summary>
     bool MoveToBackup(string originalPath, string storedPath);
 
+    /// <summary>复制（不移动）文件/目录到隔离区：被占用但可读的文件也能复制成功。失败返回 false 且清理半成品。</summary>
+    bool CopyToBackup(string originalPath, string storedPath);
+
     /// <summary>被占用无法移动时，排到下次重启时删除。</summary>
     bool ScheduleDeleteOnReboot(string path);
 

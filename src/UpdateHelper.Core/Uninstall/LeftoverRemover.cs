@@ -27,20 +27,24 @@ public sealed class LeftoverRemover(ILeftoverMutator mutator, BackupStore backup
                         break;
                     }
                     backupDir ??= backups.NewBackupDirectory(id);
-                    var stored = Path.Combine(backupDir, "files", Guid.NewGuid().ToString("N"));
+                    var rel = Path.Combine("files", Guid.NewGuid().ToString("N"));   // 清单里存相对路径
+                    var stored = Path.Combine(backupDir, rel);
                     if (mutator.MoveToBackup(item.Path, stored))
                     {
                         // 移入隔离区即"备份 + 删除"一步完成
-                        entries.Add(new BackupEntry(item.Type, item.Path, stored, BackupEntryKind.FileOrDir));
+                        entries.Add(new BackupEntry(item.Type, item.Path, rel, BackupEntryKind.FileOrDir));
                         removed++;
                     }
-                    else if (mutator.ScheduleDeleteOnReboot(item.Path))
+                    else if (mutator.CopyToBackup(item.Path, stored))
                     {
-                        rebootPending++;   // 被占用：重启后删除（此情形没有备份）
+                        // 移不动（多半被占用）但能复制：备份已就位，再排重启后删除，仍可恢复
+                        entries.Add(new BackupEntry(item.Type, item.Path, rel, BackupEntryKind.FileOrDir));
+                        if (mutator.ScheduleDeleteOnReboot(item.Path)) rebootPending++;
+                        else failed.Add(item.Path);
                     }
                     else
                     {
-                        failed.Add(item.Path);
+                        failed.Add(item.Path);   // 连备份都做不了：绝不删除
                     }
                     break;
 
@@ -51,12 +55,15 @@ public sealed class LeftoverRemover(ILeftoverMutator mutator, BackupStore backup
                         break;
                     }
                     backupDir ??= backups.NewBackupDirectory(id);
-                    var regFile = Path.Combine(backupDir, $"{regCount++}.reg");
-                    // 导出失败就绝不删除：没有备份不动手
-                    if (mutator.ExportRegistryKey(item.Path, regFile))
+                    var regRel = $"{regCount++}.reg";
+                    // 导出失败就绝不删除：没有备份不动手；删除成功后才记入清单，避免留下"其实没删"的幽灵项
+                    if (mutator.ExportRegistryKey(item.Path, Path.Combine(backupDir, regRel)))
                     {
-                        entries.Add(new BackupEntry(item.Type, item.Path, regFile, BackupEntryKind.RegistryKey));
-                        if (mutator.DeleteRegistryKey(item.Path)) removed++;
+                        if (mutator.DeleteRegistryKey(item.Path))
+                        {
+                            entries.Add(new BackupEntry(item.Type, item.Path, regRel, BackupEntryKind.RegistryKey));
+                            removed++;
+                        }
                         else failed.Add(item.Path);
                     }
                     else
@@ -78,17 +85,32 @@ public sealed class LeftoverRemover(ILeftoverMutator mutator, BackupStore backup
         return new RemovalResult(removed, rebootPending, failed, id);
     }
 
-    /// <summary>按清单恢复：文件移回原位、注册表导入 .reg；备份已丢失的项跳过，返回成功恢复的条数。</summary>
+    /// <summary>按清单恢复：文件移回原位、注册表导入 .reg；StoredPath 相对备份目录解析，
+    /// 备份已丢失或路径越出备份目录的项跳过，返回成功恢复的条数。</summary>
     public int Restore(BackupManifest manifest)
     {
+        var dir = backups.GetBackupDirectory(manifest.Id);
+        if (dir is null) return 0;
+
         var restored = 0;
         foreach (var entry in manifest.Entries)
         {
+            var stored = ResolveInside(dir, entry.StoredPath);
+            if (stored is null) continue;
             var ok = entry.Kind == BackupEntryKind.RegistryKey
-                ? mutator.ImportRegistryFile(entry.StoredPath)
-                : mutator.MoveBack(entry.StoredPath, entry.OriginalPath);
+                ? mutator.ImportRegistryFile(stored)
+                : mutator.MoveBack(stored, entry.OriginalPath);
             if (ok) restored++;
         }
         return restored;
+    }
+
+    /// <summary>把相对路径解析到备份目录之内；绝对路径或越界（..）返回 null。</summary>
+    private static string? ResolveInside(string dir, string relative)
+    {
+        if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative)) return null;
+        var full = Path.GetFullPath(Path.Combine(dir, relative));
+        var prefix = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? full : null;
     }
 }

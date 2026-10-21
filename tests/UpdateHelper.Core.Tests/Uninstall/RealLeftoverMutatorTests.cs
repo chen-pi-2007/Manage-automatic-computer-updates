@@ -29,6 +29,31 @@ public sealed class RealLeftoverMutatorTests : IDisposable
     }
 
     [Fact]
+    public void CopyToBackup_copies_a_file_that_is_locked_for_writing_and_keeps_original()
+    {
+        var src = Path.Combine(_root, "locked.dll");
+        File.WriteAllText(src, "data");
+        var stored = Path.Combine(_root, "backup", "files", "0");
+        // 以允许共享读的方式占用（模拟运行中的程序）
+        using var held = new FileStream(src, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+
+        var ok = new RealLeftoverMutator().CopyToBackup(src, stored);
+
+        Assert.True(ok);
+        Assert.Equal("data", File.ReadAllText(stored));
+        Assert.True(File.Exists(src));
+    }
+
+    [Fact]
+    public void CopyToBackup_returns_false_when_source_is_missing()
+    {
+        var ok = new RealLeftoverMutator().CopyToBackup(Path.Combine(_root, "nope"), Path.Combine(_root, "b", "0"));
+
+        Assert.False(ok);
+        Assert.False(Directory.Exists(Path.Combine(_root, "b")));
+    }
+
+    [Fact]
     public void MoveBack_restores_directory_to_original_location()
     {
         var stored = Path.Combine(_root, "backup", "0");

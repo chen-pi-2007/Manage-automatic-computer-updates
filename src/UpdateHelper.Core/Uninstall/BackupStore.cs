@@ -30,6 +30,9 @@ public sealed class BackupStore(string root, Func<DateTimeOffset> now)
         return dir;
     }
 
+    /// <summary>只读：按 Id 取备份目录路径（不创建）；Id 不合法返回 null。</summary>
+    public string? GetBackupDirectory(string id) => SafeDir(id);
+
     /// <summary>把 id 解析为 root 之下的隔离目录；id 为空、含路径分隔符或 ..、或解析后不在 root 之内则返回 null。</summary>
     private string? SafeDir(string? id)
     {

@@ -25,6 +25,7 @@ public sealed class LeftoverRemoverTests : IDisposable
         }
 
         public bool MoveToBackup(string originalPath, string storedPath) => Do($"MoveToBackup|{originalPath}|{storedPath}", "MoveToBackup:" + originalPath);
+        public bool CopyToBackup(string originalPath, string storedPath) => Do($"Copy|{originalPath}|{storedPath}", "Copy:" + originalPath);
         public bool ScheduleDeleteOnReboot(string path) => Do($"Schedule|{path}", "Schedule:" + path);
         public bool ExportRegistryKey(string keyPath, string storedRegFile) => Do($"Export|{keyPath}|{storedRegFile}", "Export:" + keyPath);
         public bool DeleteRegistryKey(string keyPath) => Do($"DeleteKey|{keyPath}", "DeleteKey:" + keyPath);
@@ -99,30 +100,84 @@ public sealed class LeftoverRemoverTests : IDisposable
     }
 
     [Fact]
-    public void Remove_schedules_reboot_delete_when_move_fails_as_locked()
+    public void Remove_copies_then_schedules_reboot_delete_when_move_fails_as_locked()
     {
-        var (remover, mutator, _) = Create();
+        var (remover, mutator, store) = Create();
         mutator.FailOn.Add("MoveToBackup:" + Dir);
 
         var result = remover.Remove("示例", [Item(LeftoverType.InstallDir, Dir)]);
 
-        Assert.Contains(mutator.Calls, c => c == "Schedule|" + Dir);
+        var copy = mutator.Calls.FindIndex(c => c.StartsWith("Copy|" + Dir));
+        var schedule = mutator.Calls.FindIndex(c => c == "Schedule|" + Dir);
+        Assert.True(copy >= 0 && schedule > copy, "必须先复制备份再排重启删");
         Assert.Equal(1, result.RebootPending);
         Assert.Equal(0, result.Removed);
         Assert.Empty(result.Failed);
+        var manifest = store.Find(result.BackupId!)!;
+        Assert.Single(manifest.Entries, e => e.OriginalPath == Dir);
     }
 
     [Fact]
-    public void Remove_reports_failed_when_reboot_schedule_also_fails()
+    public void Remove_fails_without_scheduling_when_move_and_copy_both_fail()
     {
-        var (remover, mutator, _) = Create();
+        var (remover, mutator, store) = Create();
         mutator.FailOn.Add("MoveToBackup:" + Dir);
-        mutator.FailOn.Add("Schedule:" + Dir);
+        mutator.FailOn.Add("Copy:" + Dir);
 
         var result = remover.Remove("示例", [Item(LeftoverType.File, Dir)]);
 
+        Assert.DoesNotContain(mutator.Calls, c => c.StartsWith("Schedule|"));
         Assert.Equal(0, result.RebootPending);
         Assert.Contains(Dir, result.Failed);
+        Assert.Null(result.BackupId);
+        Assert.Empty(store.ReadAll());
+    }
+
+    [Fact]
+    public void Remove_does_not_record_registry_entry_when_delete_fails()
+    {
+        var (remover, mutator, store) = Create();
+        mutator.FailOn.Add("DeleteKey:" + Key);
+
+        var result = remover.Remove("示例", [Item(LeftoverType.RegistryKey, Key)]);
+
+        Assert.Contains(Key, result.Failed);
+        Assert.Equal(0, result.Removed);
+        Assert.Null(result.BackupId);
+        Assert.Empty(store.ReadAll());
+    }
+
+    [Fact]
+    public void Restore_resolves_relative_stored_paths_against_backup_directory()
+    {
+        var (remover, mutator, store) = Create();
+        var dir = store.NewBackupDirectory("abc123");
+        var manifest = new BackupManifest("abc123", _now, "示例",
+        [
+            new BackupEntry(LeftoverType.DataDir, Dir, @"files\x1", BackupEntryKind.FileOrDir),
+            new BackupEntry(LeftoverType.RegistryKey, Key, "0.reg", BackupEntryKind.RegistryKey),
+        ]);
+
+        var restored = remover.Restore(manifest);
+
+        Assert.Equal(2, restored);
+        Assert.Contains($"MoveBack|{Path.Combine(dir, "files", "x1")}|{Dir}", mutator.Calls);
+        Assert.Contains($"Import|{Path.Combine(dir, "0.reg")}", mutator.Calls);
+    }
+
+    [Fact]
+    public void Restore_skips_entries_whose_stored_path_escapes_backup_directory()
+    {
+        var (remover, mutator, store) = Create();
+        store.NewBackupDirectory("abc123");
+        var manifest = new BackupManifest("abc123", _now, "示例",
+        [
+            new BackupEntry(LeftoverType.DataDir, Dir, @"..\..\evil", BackupEntryKind.FileOrDir),
+            new BackupEntry(LeftoverType.DataDir, Dir, @"C:\evil", BackupEntryKind.FileOrDir),
+        ]);
+
+        Assert.Equal(0, remover.Restore(manifest));
+        Assert.Empty(mutator.Calls);
     }
 
     [Fact]
@@ -143,8 +198,8 @@ public sealed class LeftoverRemoverTests : IDisposable
         var reg = Assert.Single(manifest.Entries, e => e.Kind == BackupEntryKind.RegistryKey);
         Assert.Equal(Key, reg.OriginalPath);
         Assert.EndsWith(".reg", reg.StoredPath);
-        Assert.StartsWith(Path.Combine(_root, result.BackupId!), file.StoredPath, StringComparison.OrdinalIgnoreCase);
-        Assert.StartsWith(Path.Combine(_root, result.BackupId!), reg.StoredPath, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Path.IsPathRooted(file.StoredPath));   // 存相对备份目录的路径
+        Assert.False(Path.IsPathRooted(reg.StoredPath));
     }
 
     [Fact]
@@ -171,8 +226,9 @@ public sealed class LeftoverRemoverTests : IDisposable
         Assert.Equal(2, restored);
         var file = manifest.Entries.Single(e => e.Kind == BackupEntryKind.FileOrDir);
         var reg = manifest.Entries.Single(e => e.Kind == BackupEntryKind.RegistryKey);
-        Assert.Contains($"MoveBack|{file.StoredPath}|{Dir}", mutator.Calls);
-        Assert.Contains($"Import|{reg.StoredPath}", mutator.Calls);
+        var backupDir = store.GetBackupDirectory(manifest.Id)!;
+        Assert.Contains($"MoveBack|{Path.Combine(backupDir, file.StoredPath)}|{Dir}", mutator.Calls);
+        Assert.Contains($"Import|{Path.Combine(backupDir, reg.StoredPath)}", mutator.Calls);
     }
 
     [Fact]
