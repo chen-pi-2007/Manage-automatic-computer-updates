@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Security.Principal;
 using UpdateHelper.Core.Agent;
+using UpdateHelper.Core.Rules;
+using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Core.Scanning;
 using UpdateHelper.Core.Uninstall;
 using UpdateHelper.Winget;
@@ -23,18 +25,43 @@ string? Arg(string name)
 if (args.Contains("--serve"))
 {
     var sid = AgentPaths.CurrentUserSid();
-    // 清残留：助手自己重新扫描该软件的残留，只删"自扫 ∩ 勾选"的项（见 ResidueRemovalService）
-    IReadOnlyList<LeftoverItem> Rescan(string keyName, UninstallHive hive)
+    var fileProbe = new RealFileProbe();
+    var registryProbe = new RealRegistryProbe();
+
+    // 清残留自扫：助手自己重扫该软件，带上匹配到的官方规则（否则注册表键和规则声明的残留扫不出来，会被漏删）。
+    // 和 App 一致：内置 rules 目录与已同步缓存择新；助手旁没有内置 rules 时，只认用户已同步的缓存（Phase A 限制）。
+    ResiduePreScan Prescan(string keyName, UninstallHive hive)
     {
         var scan = SystemScanner.CreateDefault().Scan();
         var group = scan.Result.Groups.FirstOrDefault(g =>
             g.Primary is { } p && p.KeyName == keyName && p.Hive == hive);
-        return group is null
-            ? []
-            : new LeftoverScanner(new RealFileProbe(), new RealRegistryProbe()).Scan(group, null, scan.Result);
+        if (group is null) return new ResiduePreScan(null, []);
+        var officialDir = OfficialRules.SelectDirectory(
+            Path.Combine(AppContext.BaseDirectory, "rules"), RuleSubscriptionConfig.DefaultCacheDirectory);
+        var rules = RuleSetLoader.Load([new RuleSource(officialDir, RuleTrust.Official)]);
+        var rule = rules.Rules.FirstOrDefault(r => r.Id == group.RuleId);
+        var residueItems = new LeftoverScanner(fileProbe, registryProbe).Scan(group, rule, scan.Result);
+        return new ResiduePreScan(group.Primary, residueItems);
     }
+
+    // 运行软件自带的卸载程序。命令由 ResidueRemovalService 从自扫到的注册表项解析（绝不取自请求），这里只负责启动并等退出。
+    static bool RunUninstaller(UninstallCommand command)
+    {
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo(command.ExecutablePath, command.Arguments) { UseShellExecute = true });
+            if (p is null) return false;
+            p.WaitForExit();
+            return p.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return false;
+        }
+    }
+
     var remover = new LeftoverRemover(new RealLeftoverMutator(), new BackupStore(BackupStore.DefaultRoot, () => DateTimeOffset.Now), () => DateTimeOffset.Now);
-    var residue = new ResidueRemovalService(Rescan, remover);
+    var residue = new ResidueRemovalService(Prescan, remover, fileProbe, registryProbe, RunUninstaller);
     var server = new AgentPipeServer(AgentPaths.PipeName(sid), new AgentRequestHandler(new WingetInstaller(agentMode: true), elevated, version, residue));
     await server.RunAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
     return 0;

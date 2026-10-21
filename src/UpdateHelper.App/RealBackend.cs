@@ -105,22 +105,62 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
         return manifest is null ? 0 : NewRemover().Restore(manifest);
     }, ct);
 
-    public async Task<UninstallOutcome> UninstallAsync(UpdateHelper.Core.Grouping.SoftwareGroup group,
+    public Task<UninstallOutcome> UninstallAsync(UpdateHelper.Core.Grouping.SoftwareGroup group,
+        IReadOnlyList<LeftoverItem> selected, CancellationToken ct) =>
+        UninstallRouting.UsesAgent(group.Primary?.Hive)
+            ? UninstallViaAgentAsync(group, selected, ct)
+            : UninstallInProcessAsync(group, selected, ct);
+
+    /// <summary>
+    /// 机器级（为所有用户安装）软件：卸载和清残留都需要管理员，整个流程交给后台助手一次办完——
+    /// 助手按固定顺序先自扫（带规则、此时卸载登记键还在）→ 跑软件自带的卸载程序 → 删"自扫 ∩ 勾选"的残留。
+    /// App 绝不在本进程里运行机器级卸载程序，也不把卸载命令发给助手（命令只由助手从注册表自取）。
+    /// </summary>
+    private async Task<UninstallOutcome> UninstallViaAgentAsync(UpdateHelper.Core.Grouping.SoftwareGroup group,
         IReadOnlyList<LeftoverItem> selected, CancellationToken ct)
     {
         var none = new RemovalResult(0, 0, [], null);
-        var viaAgent = UninstallRouting.UsesAgent(group.Primary?.Hive);
 
-        // 机器级软件要靠后台助手清残留：没启用就先说清楚，别等卸载完才发现清不了
-        if (viaAgent && selected.Count > 0)
+        var primary = group.Primary;
+        if (primary is null)
+            return new UninstallOutcome(false, none, "找不到该软件的卸载登记项，无法卸载。");
+
+        // 没启用后台助手就先说清楚，别等点了卸载才发现办不了
+        AgentStatus status;
+        try { status = await Task.Run(() => _agent.GetStatus(), ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { status = AgentStatus.NotEnabled; }
+        if (status != AgentStatus.Ready)
+            return new UninstallOutcome(false, none,
+                "这个软件是为所有用户安装的，卸载和清理残留都需要管理员权限。请先到“设置”里启用“免确认更新”（后台助手），再回来重试。");
+
+        var request = new AgentRequest(AgentProtocol.Version, AgentOp.RemoveResidue,
+            UninstallKeyName: primary.KeyName, Hive: primary.Hive,
+            SelectedPaths: selected.Select(i => i.Path).ToList(), RunNativeUninstaller: true);
+
+        AgentResponse response;
+        try { response = await _agent.SendAsync(request, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            AgentStatus status;
-            try { status = await Task.Run(() => _agent.GetStatus(), ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { status = AgentStatus.NotEnabled; }
-            if (status != AgentStatus.Ready)
-                return new UninstallOutcome(false, none,
-                    "这个软件是为所有用户安装的，清理它的残留需要管理员权限。请先到“设置”里启用“免确认更新”（后台助手），再回来重试。");
+            return new UninstallOutcome(false, none, $"后台助手处理卸载时出错：{ex.Message}");
         }
+
+        if (!response.Success)
+            return new UninstallOutcome(false, none, response.ErrorMessage ?? "后台助手没有完成卸载。");
+
+        var removal = new RemovalResult(response.RemovedCount ?? 0, response.RebootPendingCount ?? 0,
+            Enumerable.Repeat("（由后台助手处理）", response.FailedCount ?? 0).ToList(), null);
+        // 卸载程序由助手运行，视作已运行
+        var message = UninstallMessages.Build(removal, nativeRan: true, nativeSkipped: false);
+        if (selected.Count > 0 && removal.Removed + removal.RebootPending + removal.Failed.Count == 0)
+            message += "后台助手找不到该软件的登记信息（卸载程序可能已把它清除），所以没能清理残留。";
+        return new UninstallOutcome(true, removal, message);
+    }
+
+    /// <summary>当前用户的软件：无需管理员，在本进程内先跑卸载程序，再清理勾选残留（带规则的残留列表由调用方给出）。</summary>
+    private async Task<UninstallOutcome> UninstallInProcessAsync(UpdateHelper.Core.Grouping.SoftwareGroup group,
+        IReadOnlyList<LeftoverItem> selected, CancellationToken ct)
+    {
+        var none = new RemovalResult(0, 0, [], null);
 
         // 第一步：运行软件自带的卸载程序（它需要管理员时会自己弹确认框，和控制面板一样）
         var nativeRan = false;
@@ -153,9 +193,7 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
         RemovalResult removal;
         try
         {
-            removal = viaAgent
-                ? await RemoveViaAgentAsync(group, selected, ct)
-                : await Task.Run(() => NewRemover().Remove(group.Name, StillPresent(selected)), ct);
+            removal = await Task.Run(() => NewRemover().Remove(group.Name, StillPresent(selected)), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -163,10 +201,7 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
             return new UninstallOutcome(nativeRan, failed, $"清理残留时出错：{ex.Message}");
         }
 
-        var message = UninstallMessages.Build(removal, nativeRan, nativeSkipped);
-        if (viaAgent && nativeRan && removal.Removed + removal.RebootPending + removal.Failed.Count == 0)
-            message += "后台助手找不到该软件的登记信息（卸载程序可能已把它清除），所以没能清理残留。";
-        return new UninstallOutcome(nativeRan, removal, message);
+        return new UninstallOutcome(nativeRan, removal, UninstallMessages.Build(removal, nativeRan, nativeSkipped));
     }
 
     /// <summary>原生卸载程序可能已经删掉了一部分：只处理还在的，免得把"已经没了"算成失败。</summary>
@@ -181,19 +216,6 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
             LeftoverType.File => files.FileExists(i.Path),
             _ => true,
         }).ToList();
-    }
-
-    private async Task<RemovalResult> RemoveViaAgentAsync(UpdateHelper.Core.Grouping.SoftwareGroup group,
-        IReadOnlyList<LeftoverItem> selected, CancellationToken ct)
-    {
-        var primary = group.Primary ?? throw new InvalidOperationException("找不到该软件的卸载登记项");
-        var request = new AgentRequest(AgentProtocol.Version, AgentOp.RemoveResidue,
-            UninstallKeyName: primary.KeyName, Hive: primary.Hive, SelectedPaths: selected.Select(i => i.Path).ToList());
-        var response = await _agent.SendAsync(request, ct);
-        if (!response.Success)
-            throw new InvalidOperationException(response.ErrorMessage ?? "后台助手没有完成清理");
-        return new RemovalResult(response.RemovedCount ?? 0, response.RebootPendingCount ?? 0,
-            Enumerable.Repeat("（由后台助手处理）", response.FailedCount ?? 0).ToList(), null);
     }
 
     public IReadOnlyList<HistoryRecord> ReadHistory()

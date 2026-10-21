@@ -214,6 +214,24 @@ public sealed class LeftoverRemoverTests : IDisposable
     }
 
     [Fact]
+    public void Remove_with_all_operations_failing_leaves_no_backup_directory()
+    {
+        // 备份目录应在"首次成功备份前"才懒创建；全部失败时不该留下空隔离目录
+        var (remover, mutator, store) = Create();
+        mutator.FailOn.Add("MoveToBackup:" + Dir);
+        mutator.FailOn.Add("Copy:" + Dir);
+        mutator.FailOn.Add("Export:" + Key);
+
+        var result = remover.Remove("示例",
+            [Item(LeftoverType.File, Dir), Item(LeftoverType.RegistryKey, Key)]);
+
+        Assert.Null(result.BackupId);
+        Assert.Empty(store.ReadAll());
+        Assert.False(Directory.Exists(_root) && Directory.GetDirectories(_root).Length > 0,
+            "没有任何成功备份时不应创建隔离目录");
+    }
+
+    [Fact]
     public void Restore_moves_every_entry_back()
     {
         var (remover, mutator, store) = Create();

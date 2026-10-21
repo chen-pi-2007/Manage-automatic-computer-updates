@@ -88,20 +88,33 @@ public sealed class RealLeftoverMutator : ILeftoverMutator
         catch (Exception ex) when (IsExpected(ex)) { return false; }
     }
 
-    /// <summary>递归复制目录后删除源；复制失败则清理半成品目标并返回 false，源保持不动。</summary>
+    /// <summary>
+    /// 递归复制目录后删除源。复制阶段失败：清掉半成品目标、源未动、返回 false。
+    /// 复制已成功但删源失败：保留目标副本（它是源唯一的有效备份）、返回 false——
+    /// 绝不能出现"源被删一半、备份又被删掉"从而丢数据的状态。
+    /// </summary>
     internal static bool CopyThenDelete(string from, string to)
     {
         try
         {
             CopyDirectory(from, to);
+        }
+        catch (Exception ex) when (IsExpected(ex))
+        {
+            // 复制阶段失败：目标是半成品，源还完整，清掉目标免得恢复时误用
+            try { if (Directory.Exists(to)) Directory.Delete(to, true); }
+            catch (Exception ex2) when (IsExpected(ex2)) { }
+            return false;
+        }
+
+        // 复制成功，目标已是一份完整备份。即便删源失败也保留目标，宁可源目标并存也不丢数据。
+        try
+        {
             Directory.Delete(from, true);
             return true;
         }
         catch (Exception ex) when (IsExpected(ex))
         {
-            // 复制或删源失败：删掉目标副本，避免源与目标并存造成歧义
-            try { if (Directory.Exists(to)) Directory.Delete(to, true); }
-            catch (Exception ex2) when (IsExpected(ex2)) { }
             return false;
         }
     }

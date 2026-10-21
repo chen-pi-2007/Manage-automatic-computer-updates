@@ -9,7 +9,9 @@ public sealed class LeftoverRemover(ILeftoverMutator mutator, BackupStore backup
     public RemovalResult Remove(string softwareName, IReadOnlyList<LeftoverItem> selected)
     {
         var id = Guid.NewGuid().ToString("N");
-        string? backupDir = null;   // 有真正要备份的项时才创建，避免留下空目录
+        // 只解析隔离目录路径、不在磁盘上创建：真正写入由变更器按需建父目录，全部失败时就不会留下空目录
+        var backupDir = backups.GetBackupDirectory(id)
+            ?? throw new InvalidOperationException("备份目录 Id 不合法");
         var entries = new List<BackupEntry>();
         var failed = new List<string>();
         var removed = 0;
@@ -26,7 +28,6 @@ public sealed class LeftoverRemover(ILeftoverMutator mutator, BackupStore backup
                         failed.Add(item.Path);
                         break;
                     }
-                    backupDir ??= backups.NewBackupDirectory(id);
                     var rel = Path.Combine("files", Guid.NewGuid().ToString("N"));   // 清单里存相对路径
                     var stored = Path.Combine(backupDir, rel);
                     if (mutator.MoveToBackup(item.Path, stored))
@@ -54,7 +55,6 @@ public sealed class LeftoverRemover(ILeftoverMutator mutator, BackupStore backup
                         failed.Add(item.Path);
                         break;
                     }
-                    backupDir ??= backups.NewBackupDirectory(id);
                     var regRel = $"{regCount++}.reg";
                     // 导出失败就绝不删除：没有备份不动手；删除成功后才记入清单，避免留下"其实没删"的幽灵项
                     if (mutator.ExportRegistryKey(item.Path, Path.Combine(backupDir, regRel)))

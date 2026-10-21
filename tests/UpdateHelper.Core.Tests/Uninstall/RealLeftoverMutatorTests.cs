@@ -90,6 +90,27 @@ public sealed class RealLeftoverMutatorTests : IDisposable
     }
 
     [Fact]
+    public void CopyThenDelete_keeps_target_copy_when_source_delete_fails_after_copy()
+    {
+        // 跨盘搬运：复制成功后删源失败（源文件被独占读、不允许删除共享），
+        // 绝不能删掉目标副本——它是源唯一的有效备份，否则会丢数据。
+        var src = Path.Combine(_root, "csrc");
+        Directory.CreateDirectory(src);
+        var locked = Path.Combine(src, "locked.txt");
+        File.WriteAllText(locked, "DATA");
+        var dst = Path.Combine(_root, "cdst");
+
+        using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var ok = RealLeftoverMutator.CopyThenDelete(src, dst);
+            Assert.False(ok);   // 删源失败
+        }
+
+        Assert.True(Directory.Exists(dst), "目标副本必须保留");
+        Assert.Equal("DATA", File.ReadAllText(Path.Combine(dst, "locked.txt")));
+    }
+
+    [Fact]
     public void MoveToBackup_failed_move_leaves_no_empty_parent_dirs()
     {
         var parent = Path.Combine(_root, "np");
