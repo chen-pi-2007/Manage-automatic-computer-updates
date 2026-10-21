@@ -6,7 +6,8 @@ namespace UpdateHelper.Core.Agent;
 /// 后台助手处理一条请求：校验 → 调安装器 → 回传进度和结果。
 /// 对每个请求恰好回一条 Result（或 Pong）；安装器抛异常也转成失败结果，不让 Agent 崩溃。
 /// </summary>
-public sealed class AgentRequestHandler(IPackageInstaller installer, bool elevated, string agentVersion)
+public sealed class AgentRequestHandler(IPackageInstaller installer, bool elevated, string agentVersion,
+    ResidueRemovalService? residue = null)
 {
     public async Task HandleAsync(AgentRequest request, Func<AgentResponse, Task> send, CancellationToken cancellationToken)
     {
@@ -25,6 +26,25 @@ public sealed class AgentRequestHandler(IPackageInstaller installer, bool elevat
         if (!elevated)
         {
             await send(Fail("这个 Windows 账户没有管理员权限，后台助手无法免确认安装。请用管理员账户登录，或关闭免确认更新"));
+            return;
+        }
+
+        if (request.Op == AgentOp.RemoveResidue)
+        {
+            AgentResponse residueResult;
+            try
+            {
+                if (residue is null) throw new InvalidOperationException("后台助手未配置清残留功能");
+                var r = residue.Handle(request);
+                residueResult = new AgentResponse(AgentMessageType.Result, Progress: 1, Success: true,
+                    RebootRequired: r.RebootPending > 0, RemovedCount: r.Removed,
+                    RebootPendingCount: r.RebootPending, FailedCount: r.Failed.Count);
+            }
+            catch (Exception ex)
+            {
+                residueResult = Fail($"后台助手清理残留时出错：{ex.Message}");
+            }
+            await send(residueResult);
             return;
         }
 

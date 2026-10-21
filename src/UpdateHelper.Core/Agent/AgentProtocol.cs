@@ -31,7 +31,10 @@ public sealed record AgentResponse(
     string? ErrorMessage = null,
     uint? InstallerErrorCode = null,
     string? AgentVersion = null,
-    bool Elevated = false);
+    bool Elevated = false,
+    int? RemovedCount = null,
+    int? RebootPendingCount = null,
+    int? FailedCount = null);
 
 /// <summary>管道上每条消息是一行 JSON（UTF-8）。</summary>
 public static class AgentProtocol

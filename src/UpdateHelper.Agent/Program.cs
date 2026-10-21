@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Security.Principal;
 using UpdateHelper.Core.Agent;
+using UpdateHelper.Core.Scanning;
+using UpdateHelper.Core.Uninstall;
 using UpdateHelper.Winget;
 
 // 更新管理小助手的后台助手。
@@ -21,7 +23,19 @@ string? Arg(string name)
 if (args.Contains("--serve"))
 {
     var sid = AgentPaths.CurrentUserSid();
-    var server = new AgentPipeServer(AgentPaths.PipeName(sid), new AgentRequestHandler(new WingetInstaller(agentMode: true), elevated, version));
+    // 清残留：助手自己重新扫描该软件的残留，只删"自扫 ∩ 勾选"的项（见 ResidueRemovalService）
+    IReadOnlyList<LeftoverItem> Rescan(string keyName, UninstallHive hive)
+    {
+        var scan = SystemScanner.CreateDefault().Scan();
+        var group = scan.Result.Groups.FirstOrDefault(g =>
+            g.Primary is { } p && p.KeyName == keyName && p.Hive == hive);
+        return group is null
+            ? []
+            : new LeftoverScanner(new RealFileProbe(), new RealRegistryProbe()).Scan(group, null, scan.Result);
+    }
+    var remover = new LeftoverRemover(new RealLeftoverMutator(), new BackupStore(BackupStore.DefaultRoot, () => DateTimeOffset.Now), () => DateTimeOffset.Now);
+    var residue = new ResidueRemovalService(Rescan, remover);
+    var server = new AgentPipeServer(AgentPaths.PipeName(sid), new AgentRequestHandler(new WingetInstaller(agentMode: true), elevated, version, residue));
     await server.RunAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
     return 0;
 }
