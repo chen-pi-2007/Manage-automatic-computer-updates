@@ -1,5 +1,6 @@
 using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Install;
+using UpdateHelper.Core.Scanning;
 
 namespace UpdateHelper.Core.Tests;
 
@@ -128,5 +129,48 @@ public sealed class AgentProtocolTests
     public void Ping_needs_no_package()
     {
         Assert.Null(AgentRequestValidator.Validate(new AgentRequest(AgentProtocol.Version, AgentOp.Ping)));
+    }
+
+    [Fact]
+    public void Validate_rejects_removeresidue_without_uninstall_key()
+    {
+        var error = AgentRequestValidator.Validate(new AgentRequest(
+            AgentProtocol.Version, AgentOp.RemoveResidue, Hive: UninstallHive.CurrentUser));
+        Assert.NotNull(error);
+        Assert.Contains("卸载项", error);
+        Assert.NotNull(AgentRequestValidator.Validate(new AgentRequest(
+            AgentProtocol.Version, AgentOp.RemoveResidue, UninstallKeyName: "App")));
+    }
+
+    [Fact]
+    public void Validate_rejects_selected_paths_over_limit()
+    {
+        var tooMany = Enumerable.Range(0, 5001).Select(i => @"C:\a\" + i).ToList();
+        Assert.NotNull(AgentRequestValidator.Validate(new AgentRequest(
+            AgentProtocol.Version, AgentOp.RemoveResidue, UninstallKeyName: "App",
+            Hive: UninstallHive.CurrentUser, SelectedPaths: tooMany)));
+        Assert.NotNull(AgentRequestValidator.Validate(new AgentRequest(
+            AgentProtocol.Version, AgentOp.RemoveResidue, UninstallKeyName: "App",
+            Hive: UninstallHive.CurrentUser, SelectedPaths: [new string('x', 4097)])));
+    }
+
+    [Fact]
+    public void Validate_accepts_valid_removeresidue_request()
+    {
+        Assert.Null(AgentRequestValidator.Validate(new AgentRequest(
+            AgentProtocol.Version, AgentOp.RemoveResidue, UninstallKeyName: "App",
+            Hive: UninstallHive.LocalMachine64, SelectedPaths: [@"C:\Program Files\App"],
+            RunNativeUninstaller: true)));
+        Assert.Null(AgentRequestValidator.Validate(new AgentRequest(
+            AgentProtocol.Version, AgentOp.RemoveResidue, UninstallKeyName: "App",
+            Hive: UninstallHive.CurrentUser)));
+    }
+
+    [Fact]
+    public void Validate_still_rejects_version_mismatch()
+    {
+        Assert.Contains("版本不一致", AgentRequestValidator.Validate(new AgentRequest(
+            AgentProtocol.Version + 1, AgentOp.RemoveResidue, UninstallKeyName: "App",
+            Hive: UninstallHive.CurrentUser)));
     }
 }

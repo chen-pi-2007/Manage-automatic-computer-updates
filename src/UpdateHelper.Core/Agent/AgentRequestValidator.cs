@@ -16,6 +16,7 @@ public static partial class AgentRequestValidator
         if (r.Version != AgentProtocol.Version)
             return $"程序和后台助手的版本不一致（{r.Version} / {AgentProtocol.Version}），请在设置里更新后台助手";
         if (r.Op == AgentOp.Ping) return null;
+        if (r.Op == AgentOp.RemoveResidue) return ValidateRemoveResidue(r);
         if (r.Op != AgentOp.Upgrade) return "不认识的操作";
 
         if (r.PackageId is null || !PackageIdPattern().IsMatch(r.PackageId))
@@ -24,6 +25,30 @@ public static partial class AgentRequestValidator
             return $"版本号格式不对：{Shorten(r.TargetVersion)}";
         if (!Enum.IsDefined(r.Scope))
             return "安装范围不对";
+        return null;
+    }
+
+    private const int MaxKeyNameChars = 256;
+    private const int MaxSelectedPaths = 5000;
+    private const int MaxPathChars = 4096;
+
+    /// <summary>清残留请求：卸载项名和注册表位置必填，勾选路径的数量和长度设上限，防止超大请求吃光内存。</summary>
+    private static string? ValidateRemoveResidue(AgentRequest r)
+    {
+        if (string.IsNullOrEmpty(r.UninstallKeyName))
+            return "缺少卸载项名称";
+        if (r.UninstallKeyName.Length > MaxKeyNameChars)
+            return "卸载项名称太长";
+        if (r.Hive is not { } hive || !Enum.IsDefined(hive))
+            return "卸载项所在的注册表位置不对";
+        if (r.SelectedPaths is { } paths)
+        {
+            if (paths.Count > MaxSelectedPaths)
+                return $"勾选的残留项太多（最多 {MaxSelectedPaths} 项）";
+            foreach (var p in paths)
+                if (p is null || p.Length > MaxPathChars)
+                    return "有残留路径过长或为空";
+        }
         return null;
     }
 

@@ -1,19 +1,24 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using UpdateHelper.Core.Install;
+using UpdateHelper.Core.Scanning;
 
 namespace UpdateHelper.Core.Agent;
 
-/// <summary>App 能让后台助手做的事：只有这两种，不执行任意命令（spec 第 3 节）。</summary>
-public enum AgentOp { Ping, Upgrade }
+/// <summary>App 能让后台助手做的事：只有这几种，不执行任意命令（spec 第 3 节）。</summary>
+public enum AgentOp { Ping, Upgrade, RemoveResidue }
 
-/// <summary>App → Agent 的一条请求。</summary>
+/// <summary>App → Agent 的一条请求。后四个字段只用于清残留（RemoveResidue）。</summary>
 public sealed record AgentRequest(
     int Version,
     AgentOp Op,
     string? PackageId = null,
     string? TargetVersion = null,
-    InstallScopeHint Scope = InstallScopeHint.Machine);
+    InstallScopeHint Scope = InstallScopeHint.Machine,
+    string? UninstallKeyName = null,
+    UninstallHive? Hive = null,
+    IReadOnlyList<string>? SelectedPaths = null,
+    bool RunNativeUninstaller = false);
 
 public enum AgentMessageType { Progress, Result, Pong }
 
@@ -32,7 +37,7 @@ public sealed record AgentResponse(
 public static class AgentProtocol
 {
     /// <summary>协议版本：App 和 Agent 不一致时 Agent 拒绝请求，App 提示"更新后台助手"。</summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
     /// <summary>一行最多这么多字符，超过就当作格式不对（防止对方发来无限长的数据把内存吃光）。</summary>
     public const int MaxLineChars = 65536;
