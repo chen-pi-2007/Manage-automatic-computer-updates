@@ -51,7 +51,9 @@ if (args.Contains("--serve"))
         {
             using var p = Process.Start(new ProcessStartInfo(command.ExecutablePath, command.Arguments) { UseShellExecute = true });
             if (p is null) return false;
-            p.WaitForExit();
+            // 给个宽松上限：卸载程序挂住（或把自己复制到临时目录后秒退、迟迟不收尾）时，别无限期占着助手的管道。
+            // 超时不杀它——用户可能正在它的界面上操作——只当作“没干净退出”返回，后续清残留照常进行。
+            if (!p.WaitForExit((int)TimeSpan.FromMinutes(10).TotalMilliseconds)) return false;
             return p.ExitCode == 0;
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)

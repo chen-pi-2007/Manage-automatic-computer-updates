@@ -31,7 +31,14 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
     {
         var store = given ?? new RuleSourceStore(RuleSourceStore.DefaultConfigPath, RuleSourceStore.DefaultCacheRoot);
         store.CleanOrphanCaches(store.Read());
+        PruneOldBackups();   // 顺带清理超过 30 天的卸载备份隔离区（吞 IO/权限异常，不挡启动）
         return store;
+    }
+
+    private static void PruneOldBackups()
+    {
+        try { NewBackupStore().PruneExpired(TimeSpan.FromDays(30)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
     private volatile ScanSnapshot? _lastSnapshot;
 
