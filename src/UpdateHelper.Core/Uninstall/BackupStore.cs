@@ -25,9 +25,21 @@ public sealed class BackupStore(string root, Func<DateTimeOffset> now)
     /// <summary>在 root/&lt;id&gt;/ 建隔离目录并返回其路径。</summary>
     public string NewBackupDirectory(string id)
     {
-        var dir = Path.Combine(root, id);
+        var dir = SafeDir(id) ?? throw new ArgumentException("备份 Id 不合法", nameof(id));
         Directory.CreateDirectory(dir);
         return dir;
+    }
+
+    /// <summary>把 id 解析为 root 之下的隔离目录；id 为空、含路径分隔符或 ..、或解析后不在 root 之内则返回 null。</summary>
+    private string? SafeDir(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        if (id.Contains("..") || id.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return null;   // 无效文件名字符已含 / \ :
+
+        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var full = Path.GetFullPath(Path.Combine(fullRoot, id));
+        if (string.Equals(full, fullRoot, StringComparison.OrdinalIgnoreCase)) return null;
+        return full.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ? full : null;
     }
 
     public void Save(BackupManifest manifest)
@@ -47,7 +59,7 @@ public sealed class BackupStore(string root, Func<DateTimeOffset> now)
             if (string.IsNullOrWhiteSpace(line)) continue;
             try
             {
-                if (JsonSerializer.Deserialize<BackupManifest>(line, Options) is { } manifest) result.Add(manifest);
+                if (JsonSerializer.Deserialize<BackupManifest>(line, Options) is { Id: not null and not "" } manifest) result.Add(manifest);
             }
             catch (JsonException)
             {
@@ -67,26 +79,35 @@ public sealed class BackupStore(string root, Func<DateTimeOffset> now)
         var expired = all.Where(m => m.Time < cutoff).ToList();
         if (expired.Count == 0) return 0;
 
+        var drop = new HashSet<BackupManifest>(ReferenceEqualityComparer.Instance);
+        var removed = 0;
         foreach (var m in expired)
         {
-            var dir = Path.Combine(root, m.Id);
+            var dir = SafeDir(m.Id);
+            if (dir is null)
+            {
+                drop.Add(m);   // Id 不合法：本就没有合法目录，只清清单行，绝不碰磁盘
+                continue;
+            }
             try
             {
                 if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                drop.Add(m);
+                removed++;
             }
             catch (IOException)
             {
-                // 删不掉（被占用）就留着，下次启动再清；清单行仍剔除以免无限堆积
+                // 删不掉（被占用）：保留清单行，下次启动重试
             }
             catch (UnauthorizedAccessException)
             {
             }
         }
 
-        // 保留的清单按时间正序重写，保持追加文件的自然顺序
-        var keep = all.Where(m => m.Time >= cutoff).OrderBy(m => m.Time);
+        // 保留的清单按时间正序重写（含删失败待重试的），保持追加文件的自然顺序
+        var keep = all.Where(m => !drop.Contains(m)).OrderBy(m => m.Time);
         var text = string.Concat(keep.Select(m => JsonSerializer.Serialize(m, Options) + "\n"));
         File.WriteAllText(ManifestPath, text, new UTF8Encoding(false));
-        return expired.Count;
+        return removed;
     }
 }
