@@ -25,23 +25,56 @@ public sealed class RealLeftoverMutator : ILeftoverMutator
     {
         try
         {
+            var isDir = Directory.Exists(from);
+            if (!isDir && !File.Exists(from)) return false;
+            if (Directory.Exists(to) || File.Exists(to)) return false;
+            // 源存在且目标不存在后才建父目录，避免失败时留下空目录
             var parent = Path.GetDirectoryName(to);
             if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-            if (Directory.Exists(from))
+            if (!isDir)
             {
-                if (Directory.Exists(to) || File.Exists(to)) return false;
+                File.Move(from, to); // 文件 Move 自带跨盘支持
+                return true;
+            }
+            try
+            {
                 Directory.Move(from, to);
                 return true;
             }
-            if (File.Exists(from))
+            catch (IOException)
             {
-                if (Directory.Exists(to) || File.Exists(to)) return false;
-                File.Move(from, to);
-                return true;
+                // 跨盘时 Directory.Move 会抛 IOException：改为递归复制 + 删除源（沙箱已验证跨盘走此路径）
+                return CopyThenDelete(from, to);
             }
-            return false;
         }
         catch (Exception ex) when (IsExpected(ex)) { return false; }
+    }
+
+    /// <summary>递归复制目录后删除源；复制失败则清理半成品目标并返回 false，源保持不动。</summary>
+    internal static bool CopyThenDelete(string from, string to)
+    {
+        try
+        {
+            CopyDirectory(from, to);
+            Directory.Delete(from, true);
+            return true;
+        }
+        catch (Exception ex) when (IsExpected(ex))
+        {
+            // 复制或删源失败：删掉目标副本，避免源与目标并存造成歧义
+            try { if (Directory.Exists(to)) Directory.Delete(to, true); }
+            catch (Exception ex2) when (IsExpected(ex2)) { }
+            return false;
+        }
+    }
+
+    private static void CopyDirectory(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+        foreach (var f in Directory.GetFiles(from))
+            File.Copy(f, Path.Combine(to, Path.GetFileName(f)));
+        foreach (var d in Directory.GetDirectories(from))
+            CopyDirectory(d, Path.Combine(to, Path.GetFileName(d)));
     }
 
     public bool ScheduleDeleteOnReboot(string path)
@@ -108,14 +141,11 @@ public sealed class RealLeftoverMutator : ILeftoverMutator
         {
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var p = Process.Start(psi);
         if (p is null) return false;
-        p.StandardOutput.ReadToEnd();
-        p.StandardError.ReadToEnd();
+        // 不重定向输出（用不到），避免 ReadToEnd 阻塞导致超时失效或死锁
         if (!p.WaitForExit(30_000))
         {
             try { p.Kill(); } catch (Exception ex) when (IsExpected(ex)) { }

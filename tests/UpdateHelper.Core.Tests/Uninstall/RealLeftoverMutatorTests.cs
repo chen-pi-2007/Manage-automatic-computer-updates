@@ -44,6 +44,37 @@ public sealed class RealLeftoverMutatorTests : IDisposable
     }
 
     [Fact]
+    public void CopyThenDelete_moves_nested_directory_and_removes_source()
+    {
+        var src = Path.Combine(_root, "csrc");
+        Directory.CreateDirectory(Path.Combine(src, "sub", "deep"));
+        File.WriteAllText(Path.Combine(src, "a.txt"), "A");
+        File.WriteAllText(Path.Combine(src, "sub", "b.txt"), "B");
+        File.WriteAllText(Path.Combine(src, "sub", "deep", "c.txt"), "C");
+        Directory.CreateDirectory(Path.Combine(src, "emptydir"));
+        var dst = Path.Combine(_root, "cdst");
+
+        var ok = RealLeftoverMutator.CopyThenDelete(src, dst);
+
+        Assert.True(ok);
+        Assert.False(Directory.Exists(src));
+        Assert.Equal("A", File.ReadAllText(Path.Combine(dst, "a.txt")));
+        Assert.Equal("B", File.ReadAllText(Path.Combine(dst, "sub", "b.txt")));
+        Assert.Equal("C", File.ReadAllText(Path.Combine(dst, "sub", "deep", "c.txt")));
+        Assert.True(Directory.Exists(Path.Combine(dst, "emptydir")));
+    }
+
+    [Fact]
+    public void MoveToBackup_failed_move_leaves_no_empty_parent_dirs()
+    {
+        var parent = Path.Combine(_root, "np");
+        var ok = new RealLeftoverMutator().MoveToBackup(Path.Combine(_root, "none"), Path.Combine(parent, "x", "0"));
+
+        Assert.False(ok);
+        Assert.False(Directory.Exists(parent));
+    }
+
+    [Fact]
     public void MoveToBackup_returns_false_when_source_missing()
     {
         var ok = new RealLeftoverMutator().MoveToBackup(Path.Combine(_root, "nope"), Path.Combine(_root, "b", "0"));
