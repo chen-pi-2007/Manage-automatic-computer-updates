@@ -16,6 +16,8 @@ public static class UninstallMessages
 
         var text = string.Join("；", parts) + "。";
         if (removal.BackupId is not null) text += "已做备份，可在“历史”页一键恢复。";
+        if (removal.QuarantinePath is not null)
+            text += $"注意：清理中途保存恢复记录失败，已有数据暂存在隔离区：{removal.QuarantinePath}，可从该目录手动找回。";
         if (nativeSkipped) text = "找不到软件自带的卸载程序，已改为强制删除。" + text;
         else if (nativeRan) text = "已运行软件自带的卸载程序。" + text;
         return text;

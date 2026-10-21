@@ -155,7 +155,7 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
             return new UninstallOutcome(false, none, response.ErrorMessage ?? "后台助手没有完成卸载。");
 
         var removal = new RemovalResult(response.RemovedCount ?? 0, response.RebootPendingCount ?? 0,
-            Enumerable.Repeat("（由后台助手处理）", response.FailedCount ?? 0).ToList(), null);
+            Enumerable.Repeat("（由后台助手处理）", response.FailedCount ?? 0).ToList(), null, response.QuarantinePath);
         // 卸载程序由助手运行，视作已运行
         var message = UninstallMessages.Build(removal, nativeRan: true, nativeSkipped: false);
         if (selected.Count > 0 && removal.Removed + removal.RebootPending + removal.Failed.Count == 0)

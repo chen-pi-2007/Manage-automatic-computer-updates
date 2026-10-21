@@ -146,4 +146,53 @@ public sealed class BackupStoreTests : IDisposable
     {
         Assert.Throws<ArgumentException>(() => Create().NewBackupDirectory(id));
     }
+
+    [Fact]
+    public void SaveOrReplace_appends_new_ids_and_replaces_same_id()
+    {
+        var store = Create();
+        store.SaveOrReplace(Manifest("a", _now.AddDays(-2), "旧"));
+        store.SaveOrReplace(Manifest("b", _now.AddDays(-1), "新"));
+        store.SaveOrReplace(Manifest("a", _now, "改后"));   // 同 Id 覆盖，不新增
+
+        var all = store.ReadAll();
+        Assert.Equal(2, all.Count);
+        Assert.Equal("改后", store.Find("a")!.SoftwareName);
+        Assert.Equal(_now, store.Find("a")!.Time);
+        Assert.Equal("新", store.Find("b")!.SoftwareName);
+    }
+
+    [Fact]
+    public void SaveOrReplace_rewrite_is_atomic_and_leaves_no_temp_files()
+    {
+        var store = Create();
+        store.SaveOrReplace(Manifest("a", _now));
+        store.SaveOrReplace(Manifest("a", _now.AddMinutes(1), "再写"));   // 触发整文件重写
+
+        // 原子重写：不残留临时文件，清单仍可完整读出、无损坏
+        var files = Directory.GetFiles(_root, "*", SearchOption.TopDirectoryOnly);
+        Assert.DoesNotContain(files, f => Path.GetFileName(f).Contains(".tmp", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(store.ReadAll());
+        Assert.Equal("再写", store.Find("a")!.SoftwareName);
+    }
+
+    [Fact]
+    public async Task SaveOrReplace_and_ReadAll_are_concurrency_safe()
+    {
+        var store = Create();
+        const int per = 40;
+        var t1 = Task.Run(() =>
+        {
+            for (var i = 0; i < per; i++) { store.SaveOrReplace(Manifest("p" + i, _now)); _ = store.ReadAll(); }
+        });
+        var t2 = Task.Run(() =>
+        {
+            for (var i = 0; i < per; i++) { store.SaveOrReplace(Manifest("q" + i, _now)); _ = store.ReadAll(); }
+        });
+        await Task.WhenAll(t1, t2);
+
+        var all = store.ReadAll();
+        Assert.Equal(per * 2, all.Count);                              // 两个线程写入全部保留
+        Assert.Equal(per * 2, all.Select(m => m.Id).Distinct().Count());   // 无丢失、无重复、无损坏
+    }
 }

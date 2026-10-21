@@ -47,6 +47,15 @@ public sealed class UninstallHelpersTests
         Assert.DoesNotContain("已清理", msg);
     }
 
+    [Fact]
+    public void Message_surfaces_quarantine_path_when_persist_failed()
+    {
+        var msg = UninstallMessages.Build(
+            new RemovalResult(1, 0, [], "id", @"C:\Backups\abc"), nativeRan: true, nativeSkipped: false);
+        Assert.Contains(@"C:\Backups\abc", msg);
+        Assert.Contains("手动", msg);   // 明确告诉用户可从该目录手动找回
+    }
+
     [Theory]
     [InlineData(UninstallHive.CurrentUser, false)]
     [InlineData(UninstallHive.LocalMachine64, true)]

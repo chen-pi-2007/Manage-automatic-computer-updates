@@ -249,6 +249,45 @@ public sealed class LeftoverRemoverTests : IDisposable
         Assert.Contains($"Import|{Path.Combine(backupDir, reg.StoredPath)}", mutator.Calls);
     }
 
+    /// <summary>假清单存储：第 throwOnCall 次 SaveOrReplace 抛 IO 异常，其余委托真实实现。</summary>
+    private sealed class FlakyStore(string root, Func<DateTimeOffset> now, int throwOnCall) : BackupStore(root, now)
+    {
+        private int _calls;
+        public override void SaveOrReplace(BackupManifest manifest)
+        {
+            if (++_calls == throwOnCall) throw new IOException("模拟清单写入失败（磁盘满/被占用）");
+            base.SaveOrReplace(manifest);
+        }
+    }
+
+    [Fact]
+    public void Remove_persists_each_entry_incrementally_and_stops_on_persist_failure()
+    {
+        var mutator = new FakeMutator();
+        var store = new FlakyStore(_root, () => _now, throwOnCall: 2);
+        var remover = new LeftoverRemover(mutator, store, () => _now);
+        const string a = @"C:\SomeVendor\A";
+        const string b = @"C:\SomeVendor\B";
+        const string c = @"C:\SomeVendor\C";
+
+        var result = remover.Remove("示例",
+            [Item(LeftoverType.DataDir, a), Item(LeftoverType.DataDir, b), Item(LeftoverType.DataDir, c)]);
+
+        // 第 1 项的恢复记录已经落盘、可被读回（源已不可逆删除前先有了恢复记录）
+        var persisted = store.ReadAll();
+        Assert.Single(persisted);
+        Assert.Contains(persisted[0].Entries, e => e.OriginalPath == a);
+        Assert.DoesNotContain(persisted[0].Entries, e => e.OriginalPath == b);
+
+        // 第 2 项落盘失败：停止处理，把隔离区路径交回让用户手动找回（而非笼统的"清理失败"）
+        Assert.NotNull(result.QuarantinePath);
+        Assert.Equal(store.GetBackupDirectory(result.BackupId!), result.QuarantinePath);
+        Assert.Equal(1, result.Removed);
+
+        // 第 3 项完全没被动过（没有被移走/销毁）
+        Assert.DoesNotContain(mutator.Calls, call => call.Contains(c, StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Restore_skips_entries_whose_backup_is_gone()
     {

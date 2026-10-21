@@ -34,7 +34,8 @@ public sealed record AgentResponse(
     bool Elevated = false,
     int? RemovedCount = null,
     int? RebootPendingCount = null,
-    int? FailedCount = null);
+    int? FailedCount = null,
+    string? QuarantinePath = null);
 
 /// <summary>管道上每条消息是一行 JSON（UTF-8）。</summary>
 public static class AgentProtocol

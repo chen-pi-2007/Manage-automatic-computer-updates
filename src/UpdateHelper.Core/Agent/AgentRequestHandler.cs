@@ -38,7 +38,8 @@ public sealed class AgentRequestHandler(IPackageInstaller installer, bool elevat
                 var r = residue.Handle(request);
                 residueResult = new AgentResponse(AgentMessageType.Result, Progress: 1, Success: true,
                     RebootRequired: r.RebootPending > 0, RemovedCount: r.Removed,
-                    RebootPendingCount: r.RebootPending, FailedCount: r.Failed.Count);
+                    RebootPendingCount: r.RebootPending, FailedCount: r.Failed.Count,
+                    QuarantinePath: r.QuarantinePath);
             }
             catch (Exception ex)
             {
