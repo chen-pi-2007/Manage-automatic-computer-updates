@@ -18,6 +18,7 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
     private Thread? _pump;
     private Timer? _lostPoller;
     private int _lostReported;
+    private readonly object _lostGate = new();
     private bool _stopped;
 
     // NtCreateFile 的 CreateDisposition 取值（高 8 位）。
@@ -67,7 +68,11 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
         _pump = new Thread(() =>
         {
             try { _session.Source.Process(); }   // 阻塞到会话停止
-            catch (Exception) when (_stopped) { /* 停止过程中的异常无意义 */ }
+            catch (Exception)
+            {
+                // 停止过程中的异常无意义；非停止时的异常说明采集中断，按丢失上报，但绝不重抛（会崩掉提权进程）
+                if (!_stopped) SafeLost(1);
+            }
         })
         { IsBackground = true, Name = "EtwMonitorPump" };
         _pump.Start();
@@ -76,40 +81,66 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
     private const string OccupiedMessage =
         "内核跟踪（NT Kernel Logger）正被其他工具占用。请关闭 Process Monitor、Resource Monitor 等占用内核跟踪的工具后重试。";
 
+        /// <summary>
+    /// 回调里 Core/通道抛异常时绝不能让提权 Agent 崩：吞掉并按一次丢失上报（Core 据此标不完整）。
+    /// </summary>
+    private void Emit(MonitorEvent e)
+    {
+        try { onEvent(e); }
+        catch (Exception) { SafeLost(1); }
+    }
+
+    private void SafeLost(int n)
+    {
+        try { onEventsLost(n); }
+        catch (Exception) { /* 上报通道本身坏了也不能崩 */ }
+    }
+
     private void Subscribe(KernelTraceEventParser k)
     {
         k.ProcessStart += d =>
-            onEvent(new ProcessStartEvent(d.ProcessID, d.ParentID, FullImagePath(d.ProcessID, d.ImageFileName), Ts(d.TimeStamp)));
-        k.ProcessStop += d => onEvent(new ProcessStopEvent(d.ProcessID, Ts(d.TimeStamp)));
+            Emit(new ProcessStartEvent(d.ProcessID, d.ParentID, FullImagePath(d.ProcessID, d.ImageFileName), Ts(d.TimeStamp)));
+        k.ProcessStop += d => Emit(new ProcessStopEvent(d.ProcessID, Ts(d.TimeStamp)));
 
         k.FileIOCreate += d =>
         {
             if ((Convert.ToUInt32(d.CreateOptions) & FileDirectoryFile) != 0) return;
             if (!MayCreate((int)Convert.ToUInt32(d.CreateDisposition))) return;
             var (path, serial) = _devices.Resolve(d.FileName);
-            onEvent(new FileEvent(d.ProcessID, path, IsCreate: true, Ts(d.TimeStamp), serial));
+            Emit(new FileEvent(d.ProcessID, path, IsCreate: true, Ts(d.TimeStamp), serial));
+        };
+        // 改名：写临时名 → 改成最终名是常见安装/更新模式。
+        // TraceEvent 的 FileIORename 载荷只有旧名（FileObject 解析出来的名字）+ ExtraInfo（不是目标路径），
+        // 内核事件本身不带目标新名，所以拿不到最终名：
+        //   ① 旧名发 IsCreate:false，让临时名正确净零；
+        //   ② 最终名无法补回，必须发"漏记"信号（经 onEventsLost 计 1 次丢失）让 Core 把足迹标"不完整"，绝不静默漏。
+        k.FileIORename += d =>
+        {
+            var (path, serial) = _devices.Resolve(d.FileName);
+            Emit(new FileEvent(d.ProcessID, path, IsCreate: false, Ts(d.TimeStamp), serial));
+            SafeLost(1);
         };
         k.FileIODelete += d =>
         {
             var (path, serial) = _devices.Resolve(d.FileName);
-            onEvent(new FileEvent(d.ProcessID, path, IsCreate: false, Ts(d.TimeStamp), serial));
+            Emit(new FileEvent(d.ProcessID, path, IsCreate: false, Ts(d.TimeStamp), serial));
         };
 
         k.RegistryCreate += d =>
-            onEvent(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), null, MonitorEventKind.RegistryCreate, Ts(d.TimeStamp)));
+            Emit(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), null, MonitorEventKind.RegistryCreate, Ts(d.TimeStamp)));
         k.RegistrySetValue += d =>
-            onEvent(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), NullIfEmpty(d.ValueName), MonitorEventKind.RegistrySet, Ts(d.TimeStamp)));
+            Emit(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), NullIfEmpty(d.ValueName), MonitorEventKind.RegistrySet, Ts(d.TimeStamp)));
         k.RegistryDelete += d =>
-            onEvent(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), null, MonitorEventKind.RegistryDelete, Ts(d.TimeStamp)));
+            Emit(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), null, MonitorEventKind.RegistryDelete, Ts(d.TimeStamp)));
         k.RegistryDeleteValue += d =>
-            onEvent(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), NullIfEmpty(d.ValueName), MonitorEventKind.RegistryDelete, Ts(d.TimeStamp)));
+            Emit(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), NullIfEmpty(d.ValueName), MonitorEventKind.RegistryDelete, Ts(d.TimeStamp)));
 
         // 驱动加载：.sys 映像被加载（ProcessID 通常是 4 = System，归属由 Core 判断）
         k.ImageLoad += d =>
         {
             if (!d.FileName.EndsWith(".sys", StringComparison.OrdinalIgnoreCase)) return;
             var (path, _) = _devices.Resolve(d.FileName);
-            onEvent(new ServiceOrDriverEvent(d.ProcessID, Path.GetFileNameWithoutExtension(path), path, IsDriver: true, Ts(d.TimeStamp)));
+            Emit(new ServiceOrDriverEvent(d.ProcessID, Path.GetFileNameWithoutExtension(path), path, IsDriver: true, Ts(d.TimeStamp)));
         };
     }
 
@@ -165,12 +196,14 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
         try
         {
             var total = s.EventsLost;
-            var delta = total - _lostReported;
-            if (delta > 0)
+            int delta;
+            // 定时器线程与 Stop() 线程都会进来，锁住"读-算增量-写回"，避免重复上报
+            lock (_lostGate)
             {
-                _lostReported = total;
-                onEventsLost(delta);
+                delta = total - _lostReported;
+                if (delta > 0) _lostReported = total;
             }
+            if (delta > 0) SafeLost(delta);
         }
         catch (Exception) { /* 会话正在停止，忽略 */ }
     }

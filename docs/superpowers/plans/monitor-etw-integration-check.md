@@ -62,7 +62,7 @@
 - `CreateDisposition` 数值是否为 NT 语义（0 SUPERSEDE、1 OPEN、2 CREATE、3 OPEN_IF、4 OVERWRITE、5 OVERWRITE_IF）。
 - 内核 Create 事件不含结果，`OPEN_IF/OVERWRITE_IF` 打开已有文件也会被报为 `IsCreate:true`；
   确认 Core 收尾复验/IsNew 能处理（例如覆盖安装场景）。
-- 重命名（先写临时名再 rename 成正式名）在本采集层未翻译：看安装器的最终文件是否因此漏记。
+- 重命名：内核 Rename 载荷不带目标新名，采集层对旧名发 IsCreate:false 并计 1 次丢失。确认（用先写临时名再改名的安装器）漏记标记触发（onEventsLost>0、足迹被标不完整），并决定如何补回最终名（例如收尾时扫描根进程写过的目录）。
 - 注册表 `KeyName` 的实际形态（`\REGISTRY\MACHINE\...` 还是已相对化），确认 `RegPath` 翻成 `HKLM\...` / `HKCU\...`。
 
 ## 记录区（执行时填写）
