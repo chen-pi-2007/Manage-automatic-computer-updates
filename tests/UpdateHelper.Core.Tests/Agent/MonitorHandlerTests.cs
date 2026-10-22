@@ -31,13 +31,15 @@ public class MonitorHandlerTests
     {
         public readonly TempDir Dir = new();
         public FakeSource? Source;
+        public bool Unavailable;   // 可变：ETW 恢复后可切回可用，验证失败会话不占单例名额
         public readonly List<AgentResponse> Sent = [];
         public readonly MonitorHandler Handler;
 
         public Rig(bool unavailable = false, MonitorLimits? limits = null)
         {
+            Unavailable = unavailable;
             Handler = new MonitorHandler(
-                (onEvent, onLost) => Source = new FakeSource(onEvent, onLost, unavailable),
+                (onEvent, onLost) => Source = new FakeSource(onEvent, onLost, Unavailable),
                 new MonitorFootprintStore(Dir.Path, () => DateTimeOffset.Now),
                 new AllExist(), () => DateTimeOffset.Now,
                 limits ?? new MonitorLimits(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5), TimeSpan.FromMilliseconds(20)));
@@ -109,8 +111,20 @@ public class MonitorHandlerTests
         var err = Assert.Single(rig.Sent);
         Assert.Equal(AgentMessageType.Result, err.Type);
         Assert.Contains("内核跟踪被占用", err.ErrorMessage);
-        // 失败的会话不能占着单例名额：能再开
         Assert.Empty(rig.Store.ReadAll());
+
+        // 失败的会话不能占着单例名额：ETW 恢复后再开一个正常会话应当能成功落盘（证明名额确实释放了）
+        rig.Unavailable = false;
+        rig.Source = null;
+        var run = rig.Handler.StartAsync(@"C:\setup.exe", Root, rig.Send, CancellationToken.None, "s2");
+        await rig.WaitStarted();
+        rig.Source!.Push(new FileEvent(Root, Installed, true, DateTimeOffset.Now));
+
+        var fp = await rig.Handler.StopAsync("s2");
+        await run;
+
+        Assert.NotNull(fp);
+        Assert.Equal("s2", Assert.Single(rig.Store.ReadAll()).Id);
     }
 
     [Fact]

@@ -21,6 +21,12 @@ public static class AgentPaths
 
     public static string TaskName(string userSid) => $@"\UpdateHelper\Agent-{userSid}";
 
+    /// <summary>监控模式的计划任务（与升级用的任务分开：各自独立的管道与生命周期）。</summary>
+    public static string MonitorTaskName(string userSid) => $@"\UpdateHelper\AgentMonitor-{userSid}";
+
+    /// <summary>监控任务传给原生启动器的唯一参数；启动器只认这一个值，其余一律按 --serve 处理。</summary>
+    public const string LauncherMonitorArg = "--monitor";
+
     public static string PipeName(string userSid) => $"UpdateHelper.Agent.{userSid}";
 
     /// <summary>流式监控通道的管道名：与升级/清残留那条不同名，监控长连接不会占住它。</summary>

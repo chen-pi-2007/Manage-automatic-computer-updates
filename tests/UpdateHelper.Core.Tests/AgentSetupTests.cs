@@ -37,6 +37,18 @@ public sealed class AgentSetupTests : IDisposable
         Assert.Equal(@"C:\A&B\<x>\UpdateHelper.Agent.exe", XDocument.Parse(text).Descendants(ns + "Command").Single().Value);
     }
 
+    [Fact]
+    public void Task_xml_for_monitor_adds_fixed_launcher_argument_only_when_given()
+    {
+        XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+        var plain = XDocument.Parse(AgentSetup.BuildTaskXml(Sid, @"C:\x\L.exe"));
+        var monitor = XDocument.Parse(AgentSetup.BuildTaskXml(Sid, @"C:\x\L.exe", AgentPaths.LauncherMonitorArg));
+
+        Assert.Empty(plain.Descendants(ns + "Arguments"));
+        Assert.Equal("--monitor", monitor.Descendants(ns + "Arguments").Single().Value);
+        Assert.NotEqual(AgentPaths.TaskName(Sid), AgentPaths.MonitorTaskName(Sid));   // 两个任务各管各的
+    }
+
     [Theory]
     [InlineData(Sid, true)]
     [InlineData("S-1-5-18", false)]                 // SYSTEM 不是账户

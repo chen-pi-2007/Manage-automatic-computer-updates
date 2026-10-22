@@ -44,7 +44,11 @@ public sealed class MonitorPipeServer(string pipeName, IMonitorHandler handler)
     // 脱离连接运行的会话任务：RunAsync 退出前要等它们收尾（它们拿的是 RunAsync 的 ct，会随之取消）
     private readonly List<Task> _sessions = [];
 
-    public async Task RunAsync(CancellationToken cancellationToken)
+    /// <param name="idleTimeout">
+    /// 不常驻：既没有活动监控会话、也没有在途连接，持续这么久就退出（提权进程随之结束，不吃性能，镜像 --serve 的做法）。
+    /// 有会话在跑（含客户端已断开、脱离连接继续记录的会话）或正在服务连接时，计时清零——绝不因“没有新连接”砍断进行中的会话。
+    /// </param>
+    public async Task RunAsync(TimeSpan idleTimeout, CancellationToken cancellationToken)
     {
         // 与现有管道一致：只建一次实例（FirstPipeInstance），名字被别人占了就直接退出，不加入别人的管道
         NamedPipeServerStream pipe;
@@ -62,13 +66,18 @@ public sealed class MonitorPipeServer(string pipeName, IMonitorHandler handler)
             var brokenConnects = 0;
             while (!cancellationToken.IsCancellationRequested)
             {
+                // 空闲计时只在“两次服务连接之间”推进；服务连接期间不在此等待，所以不受影响
+                using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                idle.CancelAfter(idleTimeout);
                 try
                 {
-                    await pipe.WaitForConnectionAsync(cancellationToken);
+                    await pipe.WaitForConnectionAsync(idle.Token);
                 }
                 catch (OperationCanceledException)
                 {
-                    return;
+                    if (cancellationToken.IsCancellationRequested) return;   // 助手被要求退出
+                    if (HasActiveSession()) continue;   // 空闲到期但仍有会话在记录：清零重等，绝不砍断它
+                    return;   // 既无会话也无连接：不常驻，退出
                 }
                 catch (IOException)
                 {
@@ -100,6 +109,16 @@ public sealed class MonitorPipeServer(string pipeName, IMonitorHandler handler)
             Task[] pending;
             lock (_sessions) pending = [.. _sessions];
             try { await Task.WhenAll(pending); } catch (Exception) { /* 会话里的异常已在 RunSession 内处理；这里只是等待 */ }
+        }
+    }
+
+    /// <summary>是否还有未完成的监控会话（含客户端已断开、脱离连接继续记录的）。顺带清掉已完成项。</summary>
+    private bool HasActiveSession()
+    {
+        lock (_sessions)
+        {
+            _sessions.RemoveAll(t => t.IsCompleted);
+            return _sessions.Count > 0;
         }
     }
 

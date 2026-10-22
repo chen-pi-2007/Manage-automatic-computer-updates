@@ -13,6 +13,7 @@ using UpdateHelper.Winget;
 //   --serve                     由计划任务启动：在管道上等 App 的请求，空闲 2 分钟后退出
 //   --monitor-serve             由计划任务启动：在监控管道上服务软件足迹监控（ETW），空闲/超时自动收尾
 //   --install --user-sid <SID>  由 App 以管理员身份运行一次：复制到 Program Files、注册计划任务
+//   --install-monitor --user-sid <SID>  同 --install，并额外注册监控模式的计划任务（启用监控模块时一次 UAC）
 //   --disable --user-sid <SID>  由 App 以管理员身份运行：删除这个用户的计划任务
 // 退出码：0 成功、2 参数不对、3 复制失败、4 计划任务操作失败、5 没有管理员权限、6 程序包里没有原生启动器
 
@@ -91,7 +92,8 @@ if (args.Contains("--monitor-serve"))
         new MonitorFootprintStore(MonitorFootprintStore.ProtectedRoot, () => DateTimeOffset.Now),
         new RealFootprintProbe(), () => DateTimeOffset.Now, MonitorLimits.Default);
     var monitorServer = new MonitorPipeServer(AgentPaths.MonitorPipeName(AgentPaths.CurrentUserSid()), monitorHandler);
-    await monitorServer.RunAsync(CancellationToken.None);
+    // 不常驻：既没有监控会话在跑、也没有客户端连着，空闲 2 分钟（与 --serve 同量级）就退出，不吃性能
+    await monitorServer.RunAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
     return 0;
 }
 
@@ -105,6 +107,8 @@ if (args.Contains("--disable"))
 {
     try
     {
+        // 监控任务（若启用过）一并删除；它可能不存在，所以不看退出码
+        Run(schtasks, $"/delete /tn \"{AgentPaths.MonitorTaskName(userSid)}\" /f");
         return Run(schtasks, $"/delete /tn \"{AgentPaths.TaskName(userSid)}\" /f") == 0 ? 0 : 4;
     }
     catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
@@ -113,7 +117,9 @@ if (args.Contains("--disable"))
     }
 }
 
-if (!args.Contains("--install")) return 2;
+// --install-monitor = --install（部署 + 升级任务）再多注册一个监控任务，整个启用监控模块只弹一次 UAC
+var withMonitor = args.Contains("--install-monitor");
+if (!args.Contains("--install") && !withMonitor) return 2;
 
 // 0. 程序包里必须有原生（AOT）启动器；普通编译的启动器会读取用户环境里的运行时配置，失去加固意义
 if (!AgentSetup.IsNativeLauncher(AppContext.BaseDirectory)) return 6;
@@ -162,7 +168,23 @@ try
     {
         return 3;
     }
-    return Run(schtasks, $"/create /tn \"{AgentPaths.TaskName(userSid)}\" /xml \"{xmlFile}\" /f") == 0 ? 0 : 4;
+    if (Run(schtasks, $"/create /tn \"{AgentPaths.TaskName(userSid)}\" /xml \"{xmlFile}\" /f") != 0) return 4;
+
+    if (withMonitor)
+    {
+        // 监控任务：同一个原生启动器，只多一个固定参数 --monitor（启动器据此启动 --monitor-serve）
+        try
+        {
+            File.WriteAllText(xmlFile, AgentSetup.BuildTaskXml(userSid, Path.Combine(target, AgentPaths.LauncherExeName), AgentPaths.LauncherMonitorArg),
+                System.Text.Encoding.Unicode);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 3;
+        }
+        if (Run(schtasks, $"/create /tn \"{AgentPaths.MonitorTaskName(userSid)}\" /xml \"{xmlFile}\" /f") != 0) return 4;
+    }
+    return 0;
 }
 catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
 {

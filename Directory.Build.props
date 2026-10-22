@@ -8,4 +8,12 @@
     <!-- 全仓统一的版本号（唯一来源）：App / Agent / 启动器 / Core 都从这里取，发版只改这一处 -->
     <Version>0.8.0</Version>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- TraceEvent 3.1.9 传递依赖老旧的 Microsoft.NETCore.Jit 1.0.2（GHSA-xcvr-qv8h-m7xw，NU1903）。
+         该漏洞经 Agent 的 ProjectReference 也会进入 App 等下游项目的还原审计，所以抑制必须放在这里集中生效。
+         接受理由：它是 .NET Core 1.0 的 JIT 运行时包，本项目跑在 .NET 10 上并不使用；
+         Agent 只在本机以管理员身份消费 ETW，不处理外部输入，不在可利用路径上。
+         只压这一条公告（比整体 NoWarn NU1903 窄，其他包的漏洞仍会报警）。 -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-xcvr-qv8h-m7xw" />
+  </ItemGroup>
 </Project>

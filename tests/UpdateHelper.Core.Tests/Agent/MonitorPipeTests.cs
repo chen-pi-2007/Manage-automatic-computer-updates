@@ -50,10 +50,11 @@ public sealed class MonitorPipeTests
         public void OnClientDisconnected() => Disconnected.TrySetResult();
     }
 
+    // 这些用例靠 stop.Cancel() 显式收尾，所以给个远大于用例时长的空闲超时，免得它自己先退出
     private static (Task Running, CancellationTokenSource Stop) StartServer(string pipe, IMonitorHandler handler)
     {
         var stop = new CancellationTokenSource();
-        return (new MonitorPipeServer(pipe, handler).RunAsync(stop.Token), stop);
+        return (new MonitorPipeServer(pipe, handler).RunAsync(TimeSpan.FromMinutes(5), stop.Token), stop);
     }
 
     private static AgentRequest StartRequest(string id, int version = AgentProtocol.Version) =>
@@ -154,6 +155,43 @@ public sealed class MonitorPipeTests
         Assert.Equal(AgentMessageType.Footprint, last.Type);
         Assert.Equal("s2", AgentProtocol.Decode<MonitorFootprint>(last.FootprintJson!, 1 << 20)!.Id);
         Assert.Equal("s2", await handler.Stopped.Task.WaitAsync(Timeout));
+        stop.Cancel();
+        await running.WaitAsync(Timeout);
+    }
+
+    [Fact]
+    public async Task Exits_after_idle_when_no_session_or_connection()
+    {
+        // 既没有连接、也没有会话：达到空闲阈值后进程自行退出（不常驻），无需 stop.Cancel
+        var pipe = UniquePipe();
+        var running = new MonitorPipeServer(pipe, new FakeHandler(0))
+            .RunAsync(TimeSpan.FromMilliseconds(150), CancellationToken.None);
+
+        await running.WaitAsync(Timeout);
+        Assert.True(running.IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public async Task Active_session_keeps_server_alive_past_idle()
+    {
+        // 会话脱离连接继续记录时，哪怕没有新连接、远超空闲阈值，服务端也绝不能退出（否则会砍断会话、丢足迹）
+        var pipe = UniquePipe();
+        var handler = new FakeHandler(1, hangAfterDiscoveries: true);
+        using var stop = new CancellationTokenSource();
+        var running = new MonitorPipeServer(pipe, handler).RunAsync(TimeSpan.FromMilliseconds(100), stop.Token);
+        using var cancel = new CancellationTokenSource();
+        var firstItem = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var run = new MonitorPipeClient(pipe, ThisExe).RunAsync(StartRequest("live"), _ => firstItem.TrySetResult(), cancel.Token);
+        await firstItem.Task.WaitAsync(Timeout);
+        await cancel.CancelAsync();   // 客户端断开——会话脱离连接继续跑
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+
+        // 空闲阈值 100ms，等它好几倍：有会话在跑，服务端不得退出
+        await Task.Delay(500);
+        Assert.False(running.IsCompleted);
+
+        // 会话结束（stop 取消会话）后、无连接，才允许退出
         stop.Cancel();
         await running.WaitAsync(Timeout);
     }

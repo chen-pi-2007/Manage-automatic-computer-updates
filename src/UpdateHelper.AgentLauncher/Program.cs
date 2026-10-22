@@ -3,8 +3,9 @@ using System.Diagnostics;
 using Microsoft.Win32;
 using UpdateHelper.AgentLauncher;
 
-// 计划任务运行的就是这个程序。它不接受任何参数：
-// 读系统级 Path → 只保留白名单里的环境变量 → 以 --serve 启动同目录下的后台助手 → 等它结束，返回它的退出码。
+// 计划任务运行的就是这个程序。它只认一个参数 --monitor（监控任务用），其余参数一律忽略：
+// 读系统级 Path → 只保留白名单里的环境变量 → 以 --serve（监控任务为 --monitor-serve）启动同目录下的后台助手
+// → 等它结束，返回它的退出码。模式只有这两种固定取值，绝不把外部参数原样传给助手。
 
 var directory = AppContext.BaseDirectory;
 var agent = Path.Combine(directory, "UpdateHelper.Agent.exe");
@@ -23,7 +24,8 @@ var current = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 foreach (DictionaryEntry e in Environment.GetEnvironmentVariables())
     if (e.Key is string k && e.Value is string v) current[k] = v;
 
-var start = new ProcessStartInfo(agent, "--serve")
+var mode = args.Length == 1 && args[0] == "--monitor" ? "--monitor-serve" : "--serve";
+var start = new ProcessStartInfo(agent, mode)
 {
     UseShellExecute = false,
     CreateNoWindow = true,

@@ -20,10 +20,12 @@ public enum AgentStatus
 /// <summary>启用后台助手要用到的纯逻辑：任务 XML、复制部署、状态判断。真正的注册在 Agent 的 --install 里。</summary>
 public static class AgentSetup
 {
-    public static string BuildTaskXml(string userSid, string launcherExe)
+    public static string BuildTaskXml(string userSid, string launcherExe, string? launcherArguments = null)
     {
         if (!IsValidUserSid(userSid)) throw new ArgumentException("不是有效的账户 SID", nameof(userSid));
         var exe = SecurityElement.Escape(launcherExe);
+        // 监控任务给启动器带一个固定参数；任务定义只有管理员能改（见 SecurityDescriptor），参数不会被用户篡改
+        var arguments = launcherArguments is null ? "" : $"\n                  <Arguments>{SecurityElement.Escape(launcherArguments)}</Arguments>";
         return $"""
             <?xml version="1.0" encoding="UTF-16"?>
             <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -50,7 +52,7 @@ public static class AgentSetup
               </Settings>
               <Actions Context="Author">
                 <Exec>
-                  <Command>{exe}</Command>
+                  <Command>{exe}</Command>{arguments}
                 </Exec>
               </Actions>
             </Task>
