@@ -99,6 +99,17 @@
                 <ui:ToggleSwitch IsChecked="{Binding StartWithWindows}" />
             </ui:CardControl>
 
+            <ui:CardControl Margin="0,4,0,0">
+                <ui:CardControl.Header>
+                    <StackPanel>
+                        <TextBlock Text="监控模块（可选）" />
+                        <TextBlock Text="{Binding MonitorNote}" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding MonitorMessage}" FontSize="12" Foreground="OrangeRed" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ui:ToggleSwitch IsChecked="{Binding MonitorModuleEnabled}" />
+            </ui:CardControl>
+
             <TextBlock Text="外观" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,8" />
             <ui:CardControl>
                 <ui:CardControl.Header>

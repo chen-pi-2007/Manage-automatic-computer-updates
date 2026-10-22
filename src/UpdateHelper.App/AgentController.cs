@@ -43,6 +43,19 @@ public sealed class AgentController
     /// <summary>弹一次管理员确认框，删除计划任务。Program Files 里的文件保留（以后的完整安装程序负责卸载）。</summary>
     public Task<string?> DisableAsync() => RunElevatedAsync("--disable");
 
+    /// <summary>弹一次管理员确认框：部署后台助手（若还没有）并注册监控模式的计划任务。null = 成功。</summary>
+    public Task<string?> EnableMonitorAsync() => RunElevatedAsync("--install-monitor");
+
+    /// <summary>监控模式的计划任务是否存在（后台助手本体由 GetStatus 管）。</summary>
+    public bool MonitorTaskExists() => TaskExists(AgentPaths.MonitorTaskName(_sid));
+
+    /// <summary>通过监控任务拉起提权的监控服务（任务设了 IgnoreNew，已在运行时重复拉起无副作用）。</summary>
+    public void StartMonitorServer() => new TaskLauncher(_sid, AgentPaths.MonitorTaskName(_sid)).Start();
+
+    /// <summary>监控管道的客户端：防冒充，对方必须是 Program Files 里的后台助手。</summary>
+    public MonitorPipeClient CreateMonitorClient() =>
+        new(AgentPaths.MonitorPipeName(_sid), AgentPaths.AgentExe);
+
     private Task<string?> RunElevatedAsync(string verb) => Task.Run<string?>(() =>
     {
         // 用当前程序目录里的那份（启用前 Program Files 里还没有）
@@ -75,9 +88,11 @@ public sealed class AgentController
         }
     });
 
-    private bool TaskExists()
+    private bool TaskExists() => TaskExists(AgentPaths.TaskName(_sid));
+
+    private static bool TaskExists(string taskName)
     {
-        using var p = Process.Start(new ProcessStartInfo(Schtasks, $"/query /tn \"{AgentPaths.TaskName(_sid)}\"")
+        using var p = Process.Start(new ProcessStartInfo(Schtasks, $"/query /tn \"{taskName}\"")
         {
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -98,11 +113,11 @@ public sealed class AgentController
         catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { }
     }
 
-    private sealed class TaskLauncher(string sid) : IAgentLauncher
+    private sealed class TaskLauncher(string sid, string? taskName = null) : IAgentLauncher
     {
         public void Start()
         {
-            using var p = Process.Start(new ProcessStartInfo(Schtasks, $"/run /tn \"{AgentPaths.TaskName(sid)}\"")
+            using var p = Process.Start(new ProcessStartInfo(Schtasks, $"/run /tn \"{taskName ?? AgentPaths.TaskName(sid)}\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,

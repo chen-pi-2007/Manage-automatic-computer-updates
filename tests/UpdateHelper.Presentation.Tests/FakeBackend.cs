@@ -1,6 +1,7 @@
 using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
+using UpdateHelper.Core.Monitor;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Core.Rules.ThirdParty;
@@ -31,6 +32,13 @@ public sealed class FakeBackend : IAppBackend
     public AgentStatus GetAgentStatus() { AgentStatusCalls++; return OnGetAgentStatus?.Invoke() ?? AgentStatus; }
     public Task<string?> EnableAgentAsync() => Task.FromResult(OnEnableAgent());
     public Task<string?> DisableAgentAsync() => Task.FromResult(OnDisableAgent());
+
+    public Func<bool> OnEnableMonitorModule { get; set; } = () => true;
+    public List<MonitorFootprint> Footprints { get; } = [];
+    public Task<bool> EnableMonitorModuleAsync() => Task.FromResult(OnEnableMonitorModule());
+    public Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct) =>
+        throw new NotSupportedException("监控安装只在真实后端里有；界面测试不走这条。");
+    public IReadOnlyList<MonitorFootprint> ReadFootprints() => Footprints;
 
     public int ScanCalls { get; private set; }
     public List<string> Installed { get; } = [];

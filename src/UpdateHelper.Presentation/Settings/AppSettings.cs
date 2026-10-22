@@ -45,6 +45,9 @@ public sealed record AppSettings
     /// <summary>开机时自动启动到托盘（默认关）。</summary>
     public bool StartWithWindows { get; init; }
 
+    /// <summary>可选的“软件足迹监控”模块（默认关；开启时弹一次管理员确认框注册监控模式）。</summary>
+    public bool MonitorModuleEnabled { get; init; }
+
     /// <summary>把越界的数值限制到范围内，未定义的选项和格式不对的颜色换成默认。</summary>
     public AppSettings Normalized() => this with
     {

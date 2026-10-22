@@ -1,6 +1,7 @@
 using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Grouping;
 using UpdateHelper.Core.Install;
+using UpdateHelper.Core.Monitor;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Core.Rules.ThirdParty;
@@ -44,6 +45,15 @@ public interface IAppBackend
 
     /// <summary>关闭免确认更新（弹一次管理员确认框）。null = 成功，否则是中文原因。</summary>
     Task<string?> DisableAgentAsync();
+
+    /// <summary>启用监控模块（弹一次管理员确认框，注册监控模式）。true = 成功；取消 / 失败 = false，不抛。</summary>
+    Task<bool> EnableMonitorModuleAsync();
+
+    /// <summary>监控一次安装：在用户上下文启动所选安装器，经监控通道流式返回发现项，最后给出足迹。失败抛带中文消息的异常。</summary>
+    Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct);
+
+    /// <summary>读取已保存的软件足迹（新的在前）。</summary>
+    IReadOnlyList<MonitorFootprint> ReadFootprints();
 
     /// <summary>扫描一个软件的卸载残留（只读，不删除）。</summary>
     IReadOnlyList<LeftoverItem> ScanLeftovers(SoftwareGroup group);

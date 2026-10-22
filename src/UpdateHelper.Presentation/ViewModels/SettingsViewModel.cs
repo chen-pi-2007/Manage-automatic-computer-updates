@@ -8,11 +8,61 @@ public sealed class SettingsViewModel : ObservableObject
 {
     private readonly SettingsService _settings;
 
-    public SettingsViewModel(SettingsService settings)
+    // 关→开时调用的"启用监控模块"动作（由组合根注入 backend.EnableMonitorModuleAsync；返回 false = 没成功）。
+    // 注入而不是直接依赖 backend：测试不需要 UAC / 助手，也不改变本 VM 只依赖 SettingsService 的结构。
+    private readonly Func<Task<bool>>? _enableMonitorModule;
+    private string? _monitorMessage;
+
+    public SettingsViewModel(SettingsService settings, Func<Task<bool>>? enableMonitorModule = null)
     {
         _settings = settings;
+        _enableMonitorModule = enableMonitorModule;
         _settings.PropertyChanged += (_, _) => OnPropertyChanged(string.Empty);   // 刷新全部绑定
     }
+
+    /// <summary>最近一次"启用监控模块"尚未完成的任务（测试用来等待；没有则已完成）。</summary>
+    public Task PendingMonitorEnable { get; private set; } = Task.CompletedTask;
+
+    /// <summary>监控模块开关（默认关）。关→开：先保存，再触发一次启用（弹一次管理员确认框）；失败则自动回退为关。</summary>
+    public bool MonitorModuleEnabled
+    {
+        get => _settings.Current.MonitorModuleEnabled;
+        set
+        {
+            var wasOn = _settings.Current.MonitorModuleEnabled;
+            if (wasOn == value) return;   // 没变化不重复提权
+            _settings.Update(s => s with { MonitorModuleEnabled = value });
+            MonitorMessage = null;
+            if (value && _enableMonitorModule is not null) PendingMonitorEnable = EnableMonitorAsync(_enableMonitorModule);
+        }
+    }
+
+    /// <summary>启用结果提示（失败原因）；没有则为 null。</summary>
+    public string? MonitorMessage
+    {
+        get => _monitorMessage;
+        private set { _monitorMessage = value; OnPropertyChanged(); }
+    }
+
+    private async Task EnableMonitorAsync(Func<Task<bool>> enable)
+    {
+        string? failure = null;
+        try
+        {
+            if (!await enable()) failure = "没有启用监控模块（管理员确认框被取消或注册失败），已保持关闭。";
+        }
+        catch (Exception ex)
+        {
+            failure = $"启用监控模块失败：{ex.Message}";
+        }
+        if (failure is null) return;
+        // 没启用成功就别留着"开"的假象：回退为关
+        _settings.Update(s => s with { MonitorModuleEnabled = false });
+        MonitorMessage = failure;
+    }
+
+    /// <summary>设置页上监控模块的说明：可选、默认关闭、开启需要一次管理员确认。</summary>
+    public string MonitorNote => "监控模块是可选功能，默认关闭：开启后可在安装软件时记录它新增了哪些文件和注册表，日后卸载更干净。开启时会弹一次管理员确认框；不开启不影响其他任何功能。";
 
     public int ModeIndex
     {

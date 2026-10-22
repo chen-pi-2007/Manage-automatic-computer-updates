@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using UpdateHelper.Core.Agent;
 using UpdateHelper.Core.Install;
+using UpdateHelper.Core.Monitor;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Core.Rules.ThirdParty;
@@ -23,6 +24,79 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
     public AgentStatus GetAgentStatus() => _agent.GetStatus();
     public Task<string?> EnableAgentAsync() => _agent.EnableAsync();
     public Task<string?> DisableAgentAsync() => _agent.DisableAsync();
+
+    // —— 监控模块（可选，默认关；设置页开关触发 EnableMonitorModuleAsync）——
+
+    /// <summary>
+    /// 启用监控模块：弹一次管理员确认框，部署后台助手（若还没有）并注册监控模式的计划任务（--install-monitor）。
+    /// 足迹受保护区的目录与 ACL 由助手每次 --monitor-serve 启动时自己建立，这里不管。
+    /// 返回 true = 注册完成且已核对（助手就绪 + 监控任务存在）；用户取消 UAC / 失败 = false。
+    /// </summary>
+    public async Task<bool> EnableMonitorModuleAsync()
+    {
+        var error = await _agent.EnableMonitorAsync();
+        if (error is not null) return false;
+        try
+        {
+            // 再核对一次，别把"退出码 0 但任务被杀毒拦了"当成功（查询要调 schtasks，放后台线程）
+            return await Task.Run(() => _agent.GetStatus() == AgentStatus.Ready && _agent.MonitorTaskExists());
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 监控一次安装：先确保提权的监控服务在跑，再在<b>用户上下文</b>启动所选安装器（不提权，归属才不被污染），
+    /// 把它的进程号作为 RootPid 交给助手，流式接收发现项，最后返回足迹。
+    /// 失败（模块没启用 / 助手拉不起来 / 被冒充 / 安装器启动失败）抛异常，消息是中文；ct 取消 = 放弃这条连接，
+    /// 助手侧会话继续记录，之后可凭会话 id 读回。
+    /// </summary>
+    public async Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct)
+    {
+        if (!await Task.Run(() => _agent.GetStatus() == AgentStatus.Ready && _agent.MonitorTaskExists(), ct))
+            throw new InvalidOperationException("监控模块还没有启用，请先到“设置”里打开“监控模块”。");
+
+        // 先把监控服务拉起来并等它的管道就绪，再启动安装器：否则安装最初几秒的动作会漏记
+        var pipePath = @"\\.\pipe\" + AgentPaths.MonitorPipeName(AgentPaths.CurrentUserSid());
+        await Task.Run(() =>
+        {
+            if (File.Exists(pipePath)) return;
+            _agent.StartMonitorServer();
+        }, ct);
+        for (var i = 0; i < 60 && !File.Exists(pipePath); i++)
+            await Task.Delay(250, ct);
+        if (!File.Exists(pipePath))
+            throw new InvalidOperationException("监控服务没有按时启动（可能没有获得管理员权限或被安全软件拦截）。");
+
+        // 用户上下文启动：UseShellExecute 与双击等价（安装器自己需要管理员时会自己弹确认框）
+        Process process;
+        try
+        {
+            process = Process.Start(new ProcessStartInfo(installerPath) { UseShellExecute = true })
+                      ?? throw new InvalidOperationException("没能启动所选的安装程序。");
+        }
+        catch (Win32Exception ex)
+        {
+            throw new InvalidOperationException($"启动安装程序失败：{ex.Message}", ex);
+        }
+
+        using (process)
+        {
+            var request = new AgentRequest(AgentProtocol.Version, AgentOp.StartMonitor,
+                InstallerPath: installerPath, RootPid: process.Id, MonitorSessionId: Guid.NewGuid().ToString("N"));
+            // 防冒充：CreateMonitorClient 要求管道另一头是 Program Files 里的后台助手（同卸载路径用的检查）
+            return await _agent.CreateMonitorClient().RunAsync(request, d => progress?.Report(d), ct);
+        }
+    }
+
+    /// <summary>读取已保存的足迹（新的在前）。受保护区对普通用户只读（Users 有读取权限），所以本进程直接读；读不到按没有处理。</summary>
+    public IReadOnlyList<MonitorFootprint> ReadFootprints()
+    {
+        try { return new MonitorFootprintStore(MonitorFootprintStore.ProtectedRoot, () => DateTimeOffset.Now).ReadAll(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+    }
 
     // 启动兜底（spec §6.4）：创建时清理删源/改 URL 遗留的孤儿缓存（CleanOrphanCaches 内部已吞 IO/权限异常）
     private readonly RuleSourceStore _sourceStore = InitStore(sourceStore);
