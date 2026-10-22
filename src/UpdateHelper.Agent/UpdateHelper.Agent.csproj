@@ -15,6 +15,16 @@
   <ItemGroup>
     <!-- 必须直接引用，本地 dll 才会复制到输出目录（计划 3 的结论） -->
     <PackageReference Include="Microsoft.WindowsPackageManager.ComInterop" Version="1.29.380" />
+    <!-- ETW 内核事件消费者（进程监控）。3.1.9：真机 spike 验证可用的稳定版 -->
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- TraceEvent 3.1.9 传递依赖了 Microsoft.NETCore.Jit 1.0.2（GHSA-xcvr-qv8h-m7xw，NU1903）。
+         接受理由：该包是老旧 .NET Core 1.0 的 JIT 运行时包，本项目跑在 .NET 10 上并不使用它；
+         Agent 只在本机以管理员身份消费 ETW，不处理任何外部输入，不在可利用路径上。
+         用 NuGetAuditSuppress 只压这一条公告，比整体 NoWarn NU1903 更窄（其他包的漏洞仍会报警）。 -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-xcvr-qv8h-m7xw" />
   </ItemGroup>
 
   <ItemGroup>
