@@ -54,4 +54,16 @@ public class ProcessTreeTests
         Assert.Equal(AttributionLevel.Tree, tree.Attribute(200, At(5)));
         Assert.Equal(AttributionLevel.Outside, tree.Attribute(200, At(25)));
     }
+
+    [Fact]
+    public void Reused_root_pid_after_root_stops_is_Outside()
+    {
+        var tree = NewTree();
+        tree.Observe(new ProcessStopEvent(100, At(10)));
+        tree.Observe(new ProcessStartEvent(100, 4, @"C:\x\reuse.exe", At(20)));
+        tree.Observe(new ProcessStartEvent(600, 100, @"C:\x\reuse-child.exe", At(21)));
+        Assert.Equal(AttributionLevel.Tree, tree.Attribute(100, At(5)));
+        Assert.Equal(AttributionLevel.Outside, tree.Attribute(100, At(25)));
+        Assert.Equal(AttributionLevel.Outside, tree.Attribute(600, At(25)));
+    }
 }

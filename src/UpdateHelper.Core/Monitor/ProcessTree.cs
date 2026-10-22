@@ -25,21 +25,21 @@ public sealed class ProcessTree
         public string ImagePath = "";
         public DateTimeOffset Start;
         public DateTimeOffset? Stop;
+        // 仅构造时的根化身为 true；按化身而非 PID 值判定，根退出后 PID 被复用的新进程不会继承它
+        public bool IsRoot;
     }
 
-    private readonly int _rootPid;
     private readonly IReadOnlySet<string> _delegateImageNames;
     private readonly Dictionary<int, List<Incarnation>> _byPid = new();
     private readonly object _lock = new();
 
     public ProcessTree(int rootPid, IReadOnlySet<string> delegateImageNames)
     {
-        _rootPid = rootPid;
         _delegateImageNames = delegateImageNames;
         // 根进程在构造时即视为树内：从最早时刻存活，不需要等到观察到它的启动事件
         _byPid[rootPid] = new List<Incarnation>
         {
-            new() { Pid = rootPid, ParentPid = 0, Start = DateTimeOffset.MinValue },
+            new() { Pid = rootPid, ParentPid = 0, Start = DateTimeOffset.MinValue, IsRoot = true },
         };
     }
 
@@ -49,15 +49,18 @@ public sealed class ProcessTree
         {
             if (!_byPid.TryGetValue(e.Pid, out var list))
                 _byPid[e.Pid] = list = new List<Incarnation>();
-            // 同 PID 又来一次启动：上一个化身若没收到退出事件，就在此刻视为结束（PID 已被复用）
-            if (list.Count > 0 && list[^1].Stop is null && e.Pid != _rootPid)
-                list[^1].Stop = e.Time;
-            else if (list.Count > 0 && list[^1].Stop is null && e.Pid == _rootPid && list[^1].Start == DateTimeOffset.MinValue)
+            if (list.Count > 0 && list[^1].Stop is null)
             {
-                // 根进程的启动事件：补全构造时的占位化身，不新开一个
-                list[^1].ParentPid = e.ParentPid;
-                list[^1].ImagePath = e.ImagePath;
-                return;
+                var last = list[^1];
+                if (last.IsRoot && last.Start == DateTimeOffset.MinValue)
+                {
+                    // 根进程的首个启动事件：补全构造时的占位化身，不新开一个
+                    last.ParentPid = e.ParentPid;
+                    last.ImagePath = e.ImagePath;
+                    return;
+                }
+                // 同 PID 又来一次启动而没收到退出事件：旧化身在此刻结束（PID 已被复用）
+                last.Stop = e.Time;
             }
             list.Add(new Incarnation { Pid = e.Pid, ParentPid = e.ParentPid, ImagePath = e.ImagePath, Start = e.Time });
         }
@@ -86,7 +89,7 @@ public sealed class ProcessTree
             var cur = self;
             for (var depth = 0; cur is not null && depth < 256; depth++)
             {
-                if (cur.Pid == _rootPid) return AttributionLevel.Tree;
+                if (cur.IsRoot) return AttributionLevel.Tree;
                 cur = Find(cur.ParentPid, cur.Start);
             }
 
