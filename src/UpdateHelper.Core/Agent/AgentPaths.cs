@@ -23,6 +23,9 @@ public static class AgentPaths
 
     public static string PipeName(string userSid) => $"UpdateHelper.Agent.{userSid}";
 
+    /// <summary>流式监控通道的管道名：与升级/清残留那条不同名，监控长连接不会占住它。</summary>
+    public static string MonitorPipeName(string userSid) => $"UpdateHelper.Monitor.{userSid}";
+
     public static string CurrentUserSid()
     {
         using var identity = WindowsIdentity.GetCurrent();

@@ -219,7 +219,7 @@ public sealed class AgentPipeClient(string pipeName, string expectedServerExe)
         }
     }
 
-    private static string? ServerExecutable(NamedPipeClientStream pipe)
+    internal static string? ServerExecutable(NamedPipeClientStream pipe)
     {
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid)) return null;
         using var process = OpenProcess(ProcessQueryLimitedInformation, false, pid);

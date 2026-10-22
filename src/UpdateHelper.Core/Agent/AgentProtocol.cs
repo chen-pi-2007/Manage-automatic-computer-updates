@@ -1,14 +1,15 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using UpdateHelper.Core.Install;
+using UpdateHelper.Core.Monitor;
 using UpdateHelper.Core.Scanning;
 
 namespace UpdateHelper.Core.Agent;
 
 /// <summary>App 能让后台助手做的事：只有这几种，不执行任意命令（spec 第 3 节）。</summary>
-public enum AgentOp { Ping, Upgrade, RemoveResidue }
+public enum AgentOp { Ping, Upgrade, RemoveResidue, StartMonitor, StopMonitor }
 
-/// <summary>App → Agent 的一条请求。后四个字段只用于清残留（RemoveResidue）。</summary>
+/// <summary>App → Agent 的一条请求。SelectedPaths 等四个字段只用于清残留（RemoveResidue）；后三个字段只用于监控（StartMonitor/StopMonitor）。</summary>
 public sealed record AgentRequest(
     int Version,
     AgentOp Op,
@@ -18,9 +19,12 @@ public sealed record AgentRequest(
     string? UninstallKeyName = null,
     UninstallHive? Hive = null,
     IReadOnlyList<string>? SelectedPaths = null,
-    bool RunNativeUninstaller = false);
+    bool RunNativeUninstaller = false,
+    string? InstallerPath = null,
+    int RootPid = 0,
+    string? MonitorSessionId = null);
 
-public enum AgentMessageType { Progress, Result, Pong }
+public enum AgentMessageType { Progress, Result, Pong, Discovery, Footprint }
 
 /// <summary>Agent → App 的一条消息：进度（0～1）、最终结果，或对 Ping 的回答。</summary>
 public sealed record AgentResponse(
@@ -35,13 +39,15 @@ public sealed record AgentResponse(
     int? RemovedCount = null,
     int? RebootPendingCount = null,
     int? FailedCount = null,
-    string? QuarantinePath = null);
+    string? QuarantinePath = null,
+    DiscoveryItem? Discovery = null,
+    string? FootprintJson = null);
 
 /// <summary>管道上每条消息是一行 JSON（UTF-8）。</summary>
 public static class AgentProtocol
 {
     /// <summary>协议版本：App 和 Agent 不一致时 Agent 拒绝请求，App 提示"更新后台助手"。</summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     /// <summary>一行最多这么多字符，超过就当作格式不对（防止对方发来无限长的数据把内存吃光）。</summary>
     public const int MaxLineChars = 65536;
@@ -54,9 +60,9 @@ public static class AgentProtocol
     public static string Encode<T>(T message) => JsonSerializer.Serialize(message, Options);
 
     /// <summary>格式不对、类型对不上、枚举值不认识时返回 null，永不抛异常。</summary>
-    public static T? Decode<T>(string line) where T : class
+    public static T? Decode<T>(string line, int maxChars = MaxLineChars) where T : class
     {
-        if (string.IsNullOrWhiteSpace(line) || line.Length > MaxLineChars) return null;
+        if (string.IsNullOrWhiteSpace(line) || line.Length > maxChars) return null;
         try
         {
             return JsonSerializer.Deserialize<T>(line, Options);
