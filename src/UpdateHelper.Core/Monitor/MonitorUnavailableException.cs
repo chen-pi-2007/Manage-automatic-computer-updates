@@ -1,4 +1,4 @@
-namespace UpdateHelper.Agent.Monitor;
+namespace UpdateHelper.Core.Monitor;
 
 /// <summary>
 /// 内核跟踪不可用（典型原因：NT Kernel Logger 会话已被 Process Monitor 等工具占用）。

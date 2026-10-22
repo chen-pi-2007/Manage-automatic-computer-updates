@@ -1,4 +1,5 @@
 using System.Security;
+using System.Security.AccessControl;
 using System.Security.Principal;
 
 namespace UpdateHelper.Core.Agent;
@@ -69,6 +70,29 @@ public static class AgentSetup
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// 建立足迹受保护区并设 ACL：管理员/SYSTEM 完全控制，普通用户只读（读取并执行）。
+    /// 为什么：足迹是后续“按足迹清理”的依据，提权助手会据它删文件/注册表。
+    /// 如果普通用户能往里写，就能伪造一份足迹诱导提权引擎删任意路径（防伪造），
+    /// 所以必须守住“提权引擎不能被诱导删任意路径”这条线：只有管理员能写，用户只能读。
+    /// 断开继承并清掉继承来的权限，避免 ProgramData 上默认的“Users 可创建文件”渗进来。
+    /// 必须由提权进程调用；已存在的目录也会被重设，修复被改坏的 ACL。
+    /// </summary>
+    public static void EnsureFootprintsDirectory(string path)
+    {
+        var dir = Directory.CreateDirectory(path);
+        var security = new DirectorySecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        const InheritanceFlags inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+            FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+            FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+            FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
+        dir.SetAccessControl(security);
     }
 
     public static void Deploy(string sourceDirectory, string targetDirectory, string version)

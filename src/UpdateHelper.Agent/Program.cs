@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Security.Principal;
+using UpdateHelper.Agent.Monitor;
 using UpdateHelper.Core.Agent;
+using UpdateHelper.Core.Monitor;
 using UpdateHelper.Core.Rules;
 using UpdateHelper.Core.Rules.Subscription;
 using UpdateHelper.Core.Scanning;
@@ -9,6 +11,7 @@ using UpdateHelper.Winget;
 
 // 更新管理小助手的后台助手。
 //   --serve                     由计划任务启动：在管道上等 App 的请求，空闲 2 分钟后退出
+//   --monitor-serve             由计划任务启动：在监控管道上服务软件足迹监控（ETW），空闲/超时自动收尾
 //   --install --user-sid <SID>  由 App 以管理员身份运行一次：复制到 Program Files、注册计划任务
 //   --disable --user-sid <SID>  由 App 以管理员身份运行：删除这个用户的计划任务
 // 退出码：0 成功、2 参数不对、3 复制失败、4 计划任务操作失败、5 没有管理员权限、6 程序包里没有原生启动器
@@ -66,6 +69,29 @@ if (args.Contains("--serve"))
     var residue = new ResidueRemovalService(Prescan, remover, fileProbe, registryProbe, RunUninstaller);
     var server = new AgentPipeServer(AgentPaths.PipeName(sid), new AgentRequestHandler(new WingetInstaller(agentMode: true), elevated, version, residue));
     await server.RunAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
+    return 0;
+}
+
+if (args.Contains("--monitor-serve"))
+{
+    // 监控需要管理员（ETW 内核会话 + 写受保护区）。没提权就直接退出，不留半个状态
+    if (!elevated) return 5;
+    try
+    {
+        // 先建受保护区并设 ACL（管理员写、用户只读），再开始接客户端：足迹只能由提权助手写入
+        AgentSetup.EnsureFootprintsDirectory(MonitorFootprintStore.ProtectedRoot);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+    {
+        return 3;
+    }
+
+    var monitorHandler = new MonitorHandler(
+        (onEvent, onLost) => new EtwMonitorSession(onEvent, onLost),
+        new MonitorFootprintStore(MonitorFootprintStore.ProtectedRoot, () => DateTimeOffset.Now),
+        new RealFootprintProbe(), () => DateTimeOffset.Now, MonitorLimits.Default);
+    var monitorServer = new MonitorPipeServer(AgentPaths.MonitorPipeName(AgentPaths.CurrentUserSid()), monitorHandler);
+    await monitorServer.RunAsync(CancellationToken.None);
     return 0;
 }
 

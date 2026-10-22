@@ -11,7 +11,7 @@ namespace UpdateHelper.Agent.Monitor;
 /// 需要管理员权限；事件按 ETW 投递的时间顺序原样回调，不重排不缓冲
 /// （Core 的净效果计算依赖插入顺序）。
 /// </summary>
-public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> onEventsLost) : IDisposable
+public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> onEventsLost) : IMonitorSource
 {
     private readonly DeviceMap _devices = new();
     private TraceEventSession? _session;
