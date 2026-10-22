@@ -142,6 +142,22 @@ public class MonitorHandlerTests
     }
 
     [Fact]
+    public async Task Cancellation_finalizes_and_saves_promptly()
+    {
+        using var rig = new Rig();   // 空闲/最长都是 5 分钟：若不处理取消，测试会卡到超时
+        using var cts = new CancellationTokenSource();
+        var run = rig.Handler.StartAsync(@"C:\setup.exe", Root, rig.Send, cts.Token, "s1");
+        await rig.WaitStarted();
+
+        cts.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));   // 迅速返回，不空转
+
+        var fp = Assert.Single(rig.Store.ReadAll());
+        Assert.False(fp.Completeness.IsComplete);
+        Assert.True(rig.Source!.Stopped);
+    }
+
+    [Fact]
     public async Task Stop_unknown_session_reads_back_from_store()
     {
         using var rig = new Rig();

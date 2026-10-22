@@ -17,9 +17,11 @@ public class FootprintsDirectoryAclTests
         var rules = new DirectoryInfo(dir).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
             .Cast<FileSystemAccessRule>().ToList();
         var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
         var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
 
         Assert.Contains(rules, r => r.IdentityReference == admins && r.FileSystemRights.HasFlag(FileSystemRights.FullControl));
+        Assert.Contains(rules, r => r.IdentityReference == system && r.FileSystemRights.HasFlag(FileSystemRights.FullControl));
         var userRule = Assert.Single(rules, r => r.IdentityReference == users);
         Assert.False(userRule.FileSystemRights.HasFlag(FileSystemRights.WriteData));
         Assert.False(userRule.FileSystemRights.HasFlag(FileSystemRights.AppendData));

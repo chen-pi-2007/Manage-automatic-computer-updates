@@ -117,8 +117,12 @@ public sealed class MonitorHandler(
         {
             while (!session.Done.Task.IsCompleted)
             {
-                var finished = await Task.WhenAny(session.Done.Task, Task.Delay(limits.Poll, cancellationToken));
+                var delay = Task.Delay(limits.Poll, cancellationToken);
+                var finished = await Task.WhenAny(session.Done.Task, delay);
                 if (finished == session.Done.Task) break;
+                // WhenAny 不会把 delay 的取消抛出来；不显式 await 的话，取消后每轮都得到一个已取消的 delay，
+                // 既不 break 也不抛，会热自旋到最长时长。这里 await 它让取消变成异常，走下面的收尾落盘
+                await delay;
 
                 var t = now();
                 if (t - session.Start >= limits.Max)
