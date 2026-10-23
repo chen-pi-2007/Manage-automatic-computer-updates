@@ -6,10 +6,13 @@ using UpdateHelper.Core.Scanning;
 
 namespace UpdateHelper.Core.Agent;
 
-/// <summary>App 能让后台助手做的事：只有这几种，不执行任意命令（spec 第 3 节）。</summary>
-public enum AgentOp { Ping, Upgrade, RemoveResidue, StartMonitor, StopMonitor }
+/// <summary>
+/// App 能让后台助手做的事：只有这几种，不执行任意命令（spec 第 3 节）。
+/// 监控用三个：StartMonitor（起 ETW 并缓冲，助手回 Ready）、SetMonitorRoot（Ready 后把安装器根 PID 补给助手）、StopMonitor（收尾/重连读回）。
+/// </summary>
+public enum AgentOp { Ping, Upgrade, RemoveResidue, StartMonitor, StopMonitor, SetMonitorRoot }
 
-/// <summary>App → Agent 的一条请求。SelectedPaths 等四个字段只用于清残留（RemoveResidue）；后三个字段只用于监控（StartMonitor/StopMonitor）。</summary>
+/// <summary>App → Agent 的一条请求。SelectedPaths 等四个字段只用于清残留（RemoveResidue）；后三个字段只用于监控（StartMonitor/SetMonitorRoot/StopMonitor）。</summary>
 public sealed record AgentRequest(
     int Version,
     AgentOp Op,
@@ -24,7 +27,11 @@ public sealed record AgentRequest(
     int RootPid = 0,
     string? MonitorSessionId = null);
 
-public enum AgentMessageType { Progress, Result, Pong, Discovery, Footprint }
+/// <summary>
+/// Agent → App 的消息类型。Ready 是两阶段握手的回执：ETW 内核会话已就绪并开始缓冲事件，
+/// App 收到它才去启动安装器、再用 SetMonitorRoot 把根 PID 发回来（这样安装器第一刻的动作也被抓到，不漏记）。
+/// </summary>
+public enum AgentMessageType { Progress, Result, Pong, Discovery, Footprint, Ready }
 
 /// <summary>Agent → App 的一条消息：进度（0～1）、最终结果，或对 Ping 的回答。</summary>
 public sealed record AgentResponse(
@@ -46,8 +53,8 @@ public sealed record AgentResponse(
 /// <summary>管道上每条消息是一行 JSON（UTF-8）。</summary>
 public static class AgentProtocol
 {
-    /// <summary>协议版本：App 和 Agent 不一致时 Agent 拒绝请求，App 提示"更新后台助手"。</summary>
-    public const int Version = 3;
+    /// <summary>协议版本：App 和 Agent 不一致时 Agent 拒绝请求，App 提示"更新后台助手"。v4 起监控改为两阶段握手（新增 Ready / SetMonitorRoot）。</summary>
+    public const int Version = 4;
 
     /// <summary>一行最多这么多字符，超过就当作格式不对（防止对方发来无限长的数据把内存吃光）。</summary>
     public const int MaxLineChars = 65536;

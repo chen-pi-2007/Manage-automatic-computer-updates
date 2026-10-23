@@ -71,8 +71,9 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
     public bool MonitorTaskExists() => _agent.MonitorTaskExistsStrict();
 
     /// <summary>
-    /// 监控一次安装：先确保提权的监控服务在跑，再在<b>用户上下文</b>启动所选安装器（不提权，归属才不被污染），
-    /// 把它的进程号作为 RootPid 交给助手，流式接收发现项，最后返回足迹。
+    /// 监控一次安装（两阶段握手）：确保提权监控服务在跑 → 连上并发 StartMonitor（不带根 PID）→ 助手起好 ETW 并回 Ready
+    /// → 收到 Ready 才在<b>用户上下文</b>启动所选安装器（不提权，归属才不被污染），把它的进程号用 SetMonitorRoot 补给助手
+    /// → 流式接收发现项，最后返回足迹。关键：ETW 先于安装器启动，安装器第一刻的动作先被缓冲、拿到根 PID 后回放归属，不漏记。
     /// 失败（模块没启用 / 助手拉不起来 / 被冒充 / 安装器启动失败）抛异常，消息是中文；ct 取消 = 放弃这条连接，
     /// 助手侧会话继续记录，之后可凭会话 id 读回。
     /// </summary>
@@ -85,7 +86,7 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
         if (!await Task.Run(() => _agent.GetStatus() == AgentStatus.Ready && _agent.MonitorTaskExists(), ct))
             throw new InvalidOperationException("监控模块还没有启用，请先到“设置”里打开“监控模块”。");
 
-        // 先把监控服务拉起来并等它的管道就绪，再启动安装器：否则安装最初几秒的动作会漏记
+        // 先把监控服务拉起来并等它的管道就绪，再连接：否则安装最初几秒的动作会漏记
         var pipePath = @"\\.\pipe\" + AgentPaths.MonitorPipeName(AgentPaths.CurrentUserSid());
         await Task.Run(() =>
         {
@@ -97,32 +98,46 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
         if (!File.Exists(pipePath))
             throw new InvalidOperationException("监控服务没有按时启动（可能没有获得管理员权限或被安全软件拦截）。");
 
-        // 用户上下文启动：UseShellExecute 与双击等价（安装器自己需要管理员时会自己弹确认框）
-        Process process;
-        try
+        var request = new AgentRequest(AgentProtocol.Version, AgentOp.StartMonitor,
+            InstallerPath: installerPath, MonitorSessionId: Guid.NewGuid().ToString("N"));
+
+        // Ready 回调：ETW 已就绪、安装器第一刻的动作已在缓冲，此时才启动安装器（这正是修复点），返回它的根 PID
+        Process? process = null;
+        var launched = false;
+        Task<int> OnReadyLaunch()
         {
-            process = Process.Start(new ProcessStartInfo(installerPath) { UseShellExecute = true })
-                      ?? throw new InvalidOperationException("没能启动所选的安装程序。");
-        }
-        catch (Win32Exception ex)
-        {
-            throw new InvalidOperationException($"启动安装程序失败：{ex.Message}", ex);
+            try
+            {
+                // 用户上下文启动：UseShellExecute 与双击等价（安装器自己需要管理员时会自己弹确认框）
+                process = Process.Start(new ProcessStartInfo(installerPath) { UseShellExecute = true })
+                          ?? throw new InvalidOperationException("没能启动所选的安装程序。");
+            }
+            catch (Win32Exception ex)
+            {
+                throw new InvalidOperationException($"启动安装程序失败：{ex.Message}", ex);
+            }
+            launched = true;
+            return Task.FromResult(process.Id);
         }
 
-        using (process)
+        try
         {
-            var request = new AgentRequest(AgentProtocol.Version, AgentOp.StartMonitor,
-                InstallerPath: installerPath, RootPid: process.Id, MonitorSessionId: Guid.NewGuid().ToString("N"));
             // 防冒充：CreateMonitorClient 要求管道另一头是 Program Files 里的后台助手（同卸载路径用的检查）
             try
             {
-                return await _agent.CreateMonitorClient().RunAsync(request, d => progress?.Report(d), ct);
+                return await _agent.CreateMonitorClient().RunAsync(request, d => progress?.Report(d), ct, OnReadyLaunch);
             }
             catch (AgentUnavailableException ex) when (ex.Kind != AgentFailureKind.Broken)
             {
-                // 安装器此刻已经在跑了，但连接 / 认证助手失败：诚实说明这次安装没有被监控（中途断线 Broken 另论：会话仍在记录，可读回）
-                throw new InvalidOperationException($"安装程序已经启动，但没能连上监控服务，这次安装没有被监控：{ex.Message}", ex);
+                // 两阶段握手下，连接/认证失败通常发生在启动安装器之前（还没回 Ready）——此时安装器尚未启动，诚实区分：
+                throw launched
+                    ? new InvalidOperationException($"安装程序已经启动，但和监控服务的连接中断，这次安装可能没有被完整监控：{ex.Message}", ex)
+                    : new InvalidOperationException($"没能连上监控服务，这次安装还没有启动，请重试：{ex.Message}", ex);
             }
+        }
+        finally
+        {
+            process?.Dispose();
         }
     }
 

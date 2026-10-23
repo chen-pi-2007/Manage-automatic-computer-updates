@@ -12,16 +12,22 @@ namespace UpdateHelper.Core.Agent;
 public sealed record DiscoveryItem(FootprintEntryType Type, string Path, FootprintConfidence Confidence);
 
 /// <summary>
-/// 监控处理器（助手侧真正干活的一方）。约定：
-/// StartAsync 在整个监控期间运行，期间用 send 发 Discovery；会话因任何原因结束（停止/空闲超时/最长时长）时，
-/// 由它用 send 发最后的 Footprint 再返回。send 是线程安全的，连接断开后变成空操作（不会抛，也不会写已释放的管道）。
+/// 监控处理器（助手侧真正干活的一方）。约定（两阶段握手）：
+/// StartAsync 在整个监控期间运行——先起好 ETW 并缓冲事件、用 send 回一条 Ready，期间用 send 发 Discovery；
+/// 随后服务端读到 SetMonitorRoot 时调用 SetRoot 把根 PID 补进来（处理器据此建进程树、回放缓冲事件）。
+/// 会话因任何原因结束（停止/空闲超时/最长时长/根 PID 超时）时，由它用 send 发最后的 Footprint 再返回。
+/// send 是线程安全的，连接断开后变成空操作（不会抛，也不会写已释放的管道）。
 /// cancellationToken 只在助手进程要退出时取消——客户端断线不会取消它（断线后助手继续记录）。
 /// </summary>
 public interface IMonitorHandler
 {
-    /// <param name="sessionId">客户端在请求里给的会话 id（没给则由服务端生成）；之后用它 StopAsync/重连。</param>
-    Task StartAsync(string installerPath, int rootPid, Func<AgentResponse, Task> send,
+    /// <summary>起 ETW 并缓冲、回 Ready，然后一直运行到会话结束。根 PID 之后经 <see cref="SetRoot"/> 补入。</summary>
+    /// <param name="sessionId">客户端在请求里给的会话 id（没给则由服务端生成）；之后用它 SetRoot/StopAsync/重连。</param>
+    Task StartAsync(string installerPath, Func<AgentResponse, Task> send,
         CancellationToken cancellationToken, string? sessionId = null);
+
+    /// <summary>补入安装器根 PID（Ready 之后）：据此建进程树并回放已缓冲的事件。会话不存在/已设过/已结束则忽略。线程安全。</summary>
+    void SetRoot(string sessionId, int rootPid);
 
     /// <summary>结束会话并返回最终足迹；找不到该会话返回 null。重连读回也走这里。</summary>
     Task<MonitorFootprint?> StopAsync(string sessionId);
@@ -242,15 +248,16 @@ public sealed class MonitorPipeServer(string pipeName, IMonitorHandler handler)
 
     private async Task ServeStartAsync(NamedPipeServerStream pipe, Connection conn, AgentRequest request, CancellationToken serverToken)
     {
-        if (string.IsNullOrWhiteSpace(request.InstallerPath) || request.RootPid <= 0)
+        // 两阶段握手：StartMonitor 只带安装包路径，根 PID 之后由 SetMonitorRoot 补（所以这里不再要求 RootPid）
+        if (string.IsNullOrWhiteSpace(request.InstallerPath))
         {
-            await conn.Send(new AgentResponse(AgentMessageType.Result, ErrorMessage: "监控请求缺少安装包路径或进程号"));
+            await conn.Send(new AgentResponse(AgentMessageType.Result, ErrorMessage: "监控请求缺少安装包路径"));
             return;
         }
         var sessionId = string.IsNullOrEmpty(request.MonitorSessionId) ? Guid.NewGuid().ToString("N") : request.MonitorSessionId;
 
         // 会话脱离本连接运行：它的 token 是服务端 token（不是“断线 token”），所以客户端断线不会让它停
-        var session = RunSession(request.InstallerPath, request.RootPid, conn, sessionId, serverToken);
+        var session = RunSession(request.InstallerPath, conn, sessionId, serverToken);
         lock (_sessions)
         {
             _sessions.RemoveAll(t => t.IsCompleted);
@@ -276,11 +283,11 @@ public sealed class MonitorPipeServer(string pipeName, IMonitorHandler handler)
         }
     }
 
-    private async Task RunSession(string installerPath, int rootPid, Connection conn, string sessionId, CancellationToken serverToken)
+    private async Task RunSession(string installerPath, Connection conn, string sessionId, CancellationToken serverToken)
     {
         try
         {
-            await handler.StartAsync(installerPath, rootPid, conn.Send, serverToken, sessionId);
+            await handler.StartAsync(installerPath, conn.Send, serverToken, sessionId);
         }
         catch (OperationCanceledException) when (serverToken.IsCancellationRequested)
         {
@@ -308,6 +315,12 @@ public sealed class MonitorPipeServer(string pipeName, IMonitorHandler handler)
                 var line = await LineReader.ReadLineAsync(pipe, AgentProtocol.MaxLineChars, token);
                 if (line is null) return ControlResult.Disconnected;   // 0 字节（对方关闭）或超长行
                 var msg = AgentProtocol.Decode<AgentRequest>(line);
+                if (msg is { Op: AgentOp.SetMonitorRoot })
+                {
+                    // 两阶段握手第二步：把安装器根 PID 补给处理器（同步、线程安全），然后继续读 Stop/断开
+                    handler.SetRoot(msg.MonitorSessionId ?? sessionId, msg.RootPid);
+                    continue;
+                }
                 if (msg is { Op: AgentOp.StopMonitor })
                 {
                     await SendStopResultAsync(conn, msg.MonitorSessionId ?? sessionId);
@@ -360,10 +373,14 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// start 为 StartMonitor 时流式接收；为 StopMonitor（重连读回）时直接等足迹。
+    /// start 为 StartMonitor 时走两阶段握手：发 StartMonitor（不带根 PID）→ 等 Ready → 回调 onReadyLaunch 启动安装器并拿根 PID
+    /// → 发 SetMonitorRoot 补入 → 继续收 Discovery 直到最终 Footprint；为 StopMonitor（重连读回）时直接等足迹。
+    /// onReadyLaunch 只在 StartMonitor 且收到 Ready 时调用一次，返回安装器根 PID；它抛异常（启动失败/取消）则原样向上抛，
+    /// 这条连接随之放弃（服务端会话仍在记录已缓冲的早到事件，直到根 PID 超时自行收尾并标不完整）。
     /// 失败：连不上/被拒/版本不符/对方不是助手 → AgentUnavailableException；中途断线 → Broken（可凭会话 id 重连）。
     /// </summary>
-    public async Task<MonitorFootprint> RunAsync(AgentRequest start, Action<DiscoveryItem> onDiscovery, CancellationToken cancellationToken)
+    public async Task<MonitorFootprint> RunAsync(AgentRequest start, Action<DiscoveryItem> onDiscovery,
+        CancellationToken cancellationToken, Func<Task<int>>? onReadyLaunch = null)
     {
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         try
@@ -393,6 +410,8 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
             var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
             await writer.WriteLineAsync(AgentProtocol.Encode(start).AsMemory(), cancellationToken);
 
+            var awaitingRoot = start.Op == AgentOp.StartMonitor && onReadyLaunch is not null;
+
             while (true)
             {
                 var line = await LineReader.ReadLineAsync(pipe, MaxMonitorLineChars, cancellationToken)
@@ -401,6 +420,16 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
                               ?? throw new AgentUnavailableException("后台助手回复的格式不对", AgentFailureKind.Broken);
                 switch (message.Type)
                 {
+                    case AgentMessageType.Ready:
+                        // ETW 已就绪、事件已在缓冲：现在才启动安装器（这正是修复点），拿到根 PID 后补发 SetMonitorRoot
+                        if (awaitingRoot)
+                        {
+                            awaitingRoot = false;   // 只握手一次，重复的 Ready 忽略
+                            var rootPid = await onReadyLaunch!();
+                            var setRoot = start with { Op = AgentOp.SetMonitorRoot, RootPid = rootPid };
+                            await writer.WriteLineAsync(AgentProtocol.Encode(setRoot).AsMemory(), cancellationToken);
+                        }
+                        break;
                     case AgentMessageType.Discovery:
                         if (message.Discovery is not null) onDiscovery(message.Discovery);
                         break;

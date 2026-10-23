@@ -18,16 +18,21 @@ public sealed class MonitorPipeTests
             FootprintEntryType.File, $@"C:\Program Files\Demo\file{i}.dll", null, FootprintConfidence.Certain,
             1234, @"C:\setup.exe", DateTimeOffset.UnixEpoch, true)).ToList());
 
-    /// <summary>假处理器：Start 发 discoveries 条发现再发最终足迹；可选在发完发现后挂起，等待被断开/停止。</summary>
+    /// <summary>
+    /// 假处理器：两阶段握手——Start 先回 Ready，再发 discoveries 条发现，最后发足迹；可选在发完发现后挂起，等待被断开/停止。
+    /// SetRoot 记下收到的根 PID（验证 SetMonitorRoot 经服务端控制循环转到了处理器）。
+    /// </summary>
     private sealed class FakeHandler(int discoveries, bool hangAfterDiscoveries = false, int footprintEntries = 1) : IMonitorHandler
     {
         public readonly TaskCompletionSource Disconnected = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource Sent = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource<string> Stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<int> RootSet = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task StartAsync(string installerPath, int rootPid, Func<AgentResponse, Task> send,
+        public async Task StartAsync(string installerPath, Func<AgentResponse, Task> send,
             CancellationToken cancellationToken, string? sessionId = null)
         {
+            await send(new AgentResponse(AgentMessageType.Ready));   // ETW 就绪：让客户端去启动安装器并补根 PID
             for (var i = 0; i < discoveries; i++)
                 await send(new AgentResponse(AgentMessageType.Discovery, Discovery: new DiscoveryItem(
                     FootprintEntryType.File, $@"C:\Demo\{i}.dll", FootprintConfidence.Certain)));
@@ -41,6 +46,8 @@ public sealed class MonitorPipeTests
                 FootprintJson: AgentProtocol.Encode(MakeFootprint(sessionId ?? "s", footprintEntries))));
         }
 
+        public void SetRoot(string sessionId, int rootPid) => RootSet.TrySetResult(rootPid);
+
         public Task<MonitorFootprint?> StopAsync(string sessionId)
         {
             Stopped.TrySetResult(sessionId);
@@ -50,6 +57,9 @@ public sealed class MonitorPipeTests
         public void OnClientDisconnected() => Disconnected.TrySetResult();
     }
 
+    // 客户端 Ready 回调：模拟 App 启动安装器成功、拿到根 PID
+    private static Func<Task<int>> LaunchReturning(int pid) => () => Task.FromResult(pid);
+
     // 这些用例靠 stop.Cancel() 显式收尾，所以给个远大于用例时长的空闲超时，免得它自己先退出
     private static (Task Running, CancellationTokenSource Stop) StartServer(string pipe, IMonitorHandler handler)
     {
@@ -57,8 +67,9 @@ public sealed class MonitorPipeTests
         return (new MonitorPipeServer(pipe, handler).RunAsync(TimeSpan.FromMinutes(5), stop.Token), stop);
     }
 
+    // 两阶段握手：StartMonitor 不带根 PID（Ready 后由 SetMonitorRoot 补）
     private static AgentRequest StartRequest(string id, int version = AgentProtocol.Version) =>
-        new(version, AgentOp.StartMonitor, InstallerPath: @"C:\setup.exe", RootPid: 1234, MonitorSessionId: id);
+        new(version, AgentOp.StartMonitor, InstallerPath: @"C:\setup.exe", MonitorSessionId: id);
 
     /// <summary>
     /// 回归（空闲到期与客户端连入同时）：旧实现在空闲到期分支里直接 continue 再 WaitForConnectionAsync，
@@ -90,16 +101,19 @@ public sealed class MonitorPipeTests
     public async Task Streams_discoveries_then_footprint()
     {
         var pipe = UniquePipe();
-        var (running, stop) = StartServer(pipe, new FakeHandler(3));
+        var handler = new FakeHandler(3);
+        var (running, stop) = StartServer(pipe, handler);
         var got = new List<DiscoveryItem>();
 
         var footprint = await new MonitorPipeClient(pipe, ThisExe)
-            .RunAsync(StartRequest("sess1"), got.Add, CancellationToken.None).WaitAsync(Timeout);
+            .RunAsync(StartRequest("sess1"), got.Add, CancellationToken.None, LaunchReturning(1234)).WaitAsync(Timeout);
 
         Assert.Equal(["0.dll", "1.dll", "2.dll"], got.Select(d => Path.GetFileName(d.Path)));
         Assert.All(got, d => Assert.Equal(FootprintConfidence.Certain, d.Confidence));
         Assert.Equal("sess1", footprint.Id);
         Assert.Single(footprint.Entries);
+        // 根 PID 经 SetMonitorRoot 从客户端回调一路送到了处理器
+        Assert.Equal(1234, await handler.RootSet.Task.WaitAsync(Timeout));
         stop.Cancel();
         await running.WaitAsync(Timeout);
     }
@@ -112,7 +126,7 @@ public sealed class MonitorPipeTests
         var (running, stop) = StartServer(pipe, new FakeHandler(0, footprintEntries: 3000));
 
         var footprint = await new MonitorPipeClient(pipe, ThisExe)
-            .RunAsync(StartRequest("big"), _ => { }, CancellationToken.None).WaitAsync(Timeout);
+            .RunAsync(StartRequest("big"), _ => { }, CancellationToken.None, LaunchReturning(1234)).WaitAsync(Timeout);
 
         Assert.Equal(3000, footprint.Entries.Count);
         stop.Cancel();
@@ -126,7 +140,7 @@ public sealed class MonitorPipeTests
         var (running, stop) = StartServer(pipe, new FakeHandler(1));
 
         var ex = await Assert.ThrowsAsync<AgentUnavailableException>(() => new MonitorPipeClient(pipe, ThisExe)
-            .RunAsync(StartRequest("old", version: 2), _ => { }, CancellationToken.None).WaitAsync(Timeout));
+            .RunAsync(StartRequest("old", version: 2), _ => { }, CancellationToken.None, LaunchReturning(1234)).WaitAsync(Timeout));
 
         Assert.Equal(AgentFailureKind.Rejected, ex.Kind);
         stop.Cancel();
@@ -142,7 +156,7 @@ public sealed class MonitorPipeTests
         using var cancel = new CancellationTokenSource();
         var firstItem = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var run = new MonitorPipeClient(pipe, ThisExe).RunAsync(StartRequest("keep"), _ => firstItem.TrySetResult(), cancel.Token);
+        var run = new MonitorPipeClient(pipe, ThisExe).RunAsync(StartRequest("keep"), _ => firstItem.TrySetResult(), cancel.Token, LaunchReturning(1234));
         await firstItem.Task.WaitAsync(Timeout);
         await cancel.CancelAsync();   // 客户端中途断开
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
@@ -167,13 +181,17 @@ public sealed class MonitorPipeTests
         var handler = new FakeHandler(1, hangAfterDiscoveries: true);
         var (running, stop) = StartServer(pipe, handler);
 
-        // 用裸管道在同一条连接上先发 StartMonitor、收到一条发现后再发 StopMonitor
+        // 用裸管道在同一条连接上先发 StartMonitor，收到 Ready 后补发 SetMonitorRoot，再收到一条发现后发 StopMonitor
         using var raw = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
         await raw.ConnectAsync((int)Timeout.TotalMilliseconds);
         var writer = new StreamWriter(raw, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
         await writer.WriteLineAsync(AgentProtocol.Encode(StartRequest("s2")));
+        Assert.Equal(AgentMessageType.Ready, AgentProtocol.Decode<AgentResponse>(await ReadLine(raw))!.Type);
+
+        await writer.WriteLineAsync(AgentProtocol.Encode(new AgentRequest(AgentProtocol.Version, AgentOp.SetMonitorRoot, RootPid: 1234, MonitorSessionId: "s2")));
         var line = await ReadLine(raw);
         Assert.Equal(AgentMessageType.Discovery, AgentProtocol.Decode<AgentResponse>(line)!.Type);
+        Assert.Equal(1234, await handler.RootSet.Task.WaitAsync(Timeout));
 
         await writer.WriteLineAsync(AgentProtocol.Encode(new AgentRequest(AgentProtocol.Version, AgentOp.StopMonitor, MonitorSessionId: "s2")));
         var last = AgentProtocol.Decode<AgentResponse>(await ReadLine(raw))!;
@@ -208,7 +226,7 @@ public sealed class MonitorPipeTests
         using var cancel = new CancellationTokenSource();
         var firstItem = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var run = new MonitorPipeClient(pipe, ThisExe).RunAsync(StartRequest("live"), _ => firstItem.TrySetResult(), cancel.Token);
+        var run = new MonitorPipeClient(pipe, ThisExe).RunAsync(StartRequest("live"), _ => firstItem.TrySetResult(), cancel.Token, LaunchReturning(1234));
         await firstItem.Task.WaitAsync(Timeout);
         await cancel.CancelAsync();   // 客户端断开——会话脱离连接继续跑
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
