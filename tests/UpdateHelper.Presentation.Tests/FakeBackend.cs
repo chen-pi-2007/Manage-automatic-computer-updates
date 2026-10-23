@@ -33,9 +33,13 @@ public sealed class FakeBackend : IAppBackend
     public Task<string?> EnableAgentAsync() => Task.FromResult(OnEnableAgent());
     public Task<string?> DisableAgentAsync() => Task.FromResult(OnDisableAgent());
 
-    public Func<bool> OnEnableMonitorModule { get; set; } = () => true;
+    public Func<string?> OnEnableMonitorModule { get; set; } = () => null;
+    public Func<string?> OnDisableMonitorModule { get; set; } = () => null;
+    public Func<bool> OnMonitorTaskExists { get; set; } = () => true;
     public List<MonitorFootprint> Footprints { get; } = [];
-    public Task<bool> EnableMonitorModuleAsync() => Task.FromResult(OnEnableMonitorModule());
+    public Task<string?> EnableMonitorModuleAsync() => Task.FromResult(OnEnableMonitorModule());
+    public Task<string?> DisableMonitorModuleAsync() => Task.FromResult(OnDisableMonitorModule());
+    public bool MonitorTaskExists() => OnMonitorTaskExists();
     public Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct) =>
         throw new NotSupportedException("监控安装只在真实后端里有；界面测试不走这条。");
     public IReadOnlyList<MonitorFootprint> ReadFootprints() => Footprints;

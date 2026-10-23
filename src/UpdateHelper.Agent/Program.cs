@@ -13,6 +13,7 @@ using UpdateHelper.Winget;
 //   --serve                     由计划任务启动：在管道上等 App 的请求，空闲 2 分钟后退出
 //   --monitor-serve             由计划任务启动：在监控管道上服务软件足迹监控（ETW），空闲/超时自动收尾
 //   --install --user-sid <SID>  由 App 以管理员身份运行一次：复制到 Program Files、注册计划任务
+//   --disable-monitor --user-sid <SID>  只删监控模式的计划任务（关闭监控模块时一次 UAC）
 //   --install-monitor --user-sid <SID>  同 --install，并额外注册监控模式的计划任务（启用监控模块时一次 UAC）
 //   --disable --user-sid <SID>  由 App 以管理员身份运行：删除这个用户的计划任务
 // 退出码：0 成功、2 参数不对、3 复制失败、4 计划任务操作失败、5 没有管理员权限、6 程序包里没有原生启动器
@@ -110,6 +111,23 @@ if (args.Contains("--disable"))
         // 监控任务（若启用过）一并删除；它可能不存在，所以不看退出码
         Run(schtasks, $"/delete /tn \"{AgentPaths.MonitorTaskName(userSid)}\" /f");
         return Run(schtasks, $"/delete /tn \"{AgentPaths.TaskName(userSid)}\" /f") == 0 ? 0 : 4;
+    }
+    catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+    {
+        return 4;
+    }
+}
+
+// --disable-monitor：只删监控模式的计划任务（关闭监控模块时一次 UAC，与 --install-monitor 对称）。
+// 不动免确认助手自己的任务和 Program Files 里的文件；任务本来就不存在也算成功（幂等）。
+if (args.Contains("--disable-monitor"))
+{
+    try
+    {
+        var monitorTask = AgentPaths.MonitorTaskName(userSid);
+        if (Run(schtasks, $"/delete /tn \"{monitorTask}\" /f") == 0) return 0;
+        // 删除失败：可能是本来就没有（成功），也可能真删不掉（失败）——再查一次为准
+        return Run(schtasks, $"/query /tn \"{monitorTask}\"") != 0 ? 0 : 4;
     }
     catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
     {

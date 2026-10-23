@@ -60,6 +60,32 @@ public sealed class MonitorPipeTests
     private static AgentRequest StartRequest(string id, int version = AgentProtocol.Version) =>
         new(version, AgentOp.StartMonitor, InstallerPath: @"C:\setup.exe", RootPid: 1234, MonitorSessionId: id);
 
+    /// <summary>
+    /// 回归（空闲到期与客户端连入同时）：旧实现在空闲到期分支里直接 continue 再 WaitForConnectionAsync，
+    /// 若此刻管道已是已连接态会抛未捕获的 InvalidOperationException 崩掉 RunAsync。
+    /// 时序无法稳定复现，所以扫一串不同的空闲时长 / 连入延迟去撞这个窗口，只断言"服务从不崩"；
+    /// 连入的客户端要么被服务（收到错误回复）要么服务干净退出，两种都可以，唯独不能抛异常。
+    /// </summary>
+    [Fact]
+    public async Task Idle_expiry_racing_a_connecting_client_never_crashes_the_server()
+    {
+        for (var i = 0; i < 40; i++)
+        {
+            var pipe = UniquePipe();
+            var server = new MonitorPipeServer(pipe, new FakeHandler(0)).RunAsync(TimeSpan.FromMilliseconds(15), CancellationToken.None);
+            await Task.Delay(8 + i % 16);   // 在空闲到期（15ms）前后扫过
+            try
+            {
+                using var client = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+                await client.ConnectAsync(500);
+                var writer = new StreamWriter(client, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
+                await writer.WriteLineAsync("{\"bad\":");   // 坏请求：服务端应回错误后复位
+            }
+            catch (Exception ex) when (ex is TimeoutException or IOException) { /* 服务已空闲退出：合法 */ }
+            await server.WaitAsync(Timeout);   // 有异常会在这里抛出
+        }
+    }
+
     [Fact]
     public async Task Streams_discoveries_then_footprint()
     {

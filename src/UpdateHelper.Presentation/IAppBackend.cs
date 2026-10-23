@@ -46,8 +46,14 @@ public interface IAppBackend
     /// <summary>关闭免确认更新（弹一次管理员确认框）。null = 成功，否则是中文原因。</summary>
     Task<string?> DisableAgentAsync();
 
-    /// <summary>启用监控模块（弹一次管理员确认框，注册监控模式）。true = 成功；取消 / 失败 = false，不抛。</summary>
-    Task<bool> EnableMonitorModuleAsync();
+    /// <summary>启用监控模块（弹一次管理员确认框，注册监控模式）。null = 成功，否则是中文具体原因（取消 / 缺启动器 / 被拦截…），不抛。</summary>
+    Task<string?> EnableMonitorModuleAsync();
+
+    /// <summary>关闭监控模块（弹一次管理员确认框，删除监控模式的计划任务）。null = 成功且任务确已不在，否则是中文原因，不抛。</summary>
+    Task<string?> DisableMonitorModuleAsync();
+
+    /// <summary>监控模式的计划任务现在是否存在。查询本身失败（超时等）时抛异常——调用方应视为"不确定"而不是"不存在"。</summary>
+    bool MonitorTaskExists();
 
     /// <summary>监控一次安装：在用户上下文启动所选安装器，经监控通道流式返回发现项，最后给出足迹。失败抛带中文消息的异常。</summary>
     Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct);

@@ -49,6 +49,18 @@ public sealed class AgentSetupTests : IDisposable
         Assert.NotEqual(AgentPaths.TaskName(Sid), AgentPaths.MonitorTaskName(Sid));   // 两个任务各管各的
     }
 
+    [Fact]
+    public void Monitor_task_description_is_about_monitoring_not_updates()
+    {
+        XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+        var plain = XDocument.Parse(AgentSetup.BuildTaskXml(Sid, @"C:\x\L.exe")).Descendants(ns + "Description").Single().Value;
+        var monitor = XDocument.Parse(AgentSetup.BuildTaskXml(Sid, @"C:\x\L.exe", AgentPaths.LauncherMonitorArg)).Descendants(ns + "Description").Single().Value;
+
+        Assert.Contains("在你点更新时安装", plain);          // 升级任务的描述不变
+        Assert.DoesNotContain("在你点更新时安装", monitor);  // 监控任务不再沿用
+        Assert.Contains("监控", monitor);
+    }
+
     [Theory]
     [InlineData(Sid, true)]
     [InlineData("S-1-5-18", false)]                 // SYSTEM 不是账户

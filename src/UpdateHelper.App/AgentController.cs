@@ -46,8 +46,17 @@ public sealed class AgentController
     /// <summary>弹一次管理员确认框：部署后台助手（若还没有）并注册监控模式的计划任务。null = 成功。</summary>
     public Task<string?> EnableMonitorAsync() => RunElevatedAsync("--install-monitor");
 
+    /// <summary>弹一次管理员确认框：只删监控模式的计划任务（--disable-monitor，免确认助手自己的任务不动）。null = 成功。</summary>
+    public Task<string?> DisableMonitorAsync() => RunElevatedAsync("--disable-monitor");
+
     /// <summary>监控模式的计划任务是否存在（后台助手本体由 GetStatus 管）。</summary>
     public bool MonitorTaskExists() => TaskExists(AgentPaths.MonitorTaskName(_sid));
+
+    /// <summary>
+    /// 同上，但查询超时时抛 InvalidOperationException 而不是当成"不存在"。
+    /// 为什么：用来核对设置时，"查不出来"不能被误判成"任务没了"而把用户的开关回落。
+    /// </summary>
+    public bool MonitorTaskExistsStrict() => TaskExists(AgentPaths.MonitorTaskName(_sid), throwOnTimeout: true);
 
     /// <summary>通过监控任务拉起提权的监控服务（任务设了 IgnoreNew，已在运行时重复拉起无副作用）。</summary>
     public void StartMonitorServer() => new TaskLauncher(_sid, AgentPaths.MonitorTaskName(_sid)).Start();
@@ -90,7 +99,7 @@ public sealed class AgentController
 
     private bool TaskExists() => TaskExists(AgentPaths.TaskName(_sid));
 
-    private static bool TaskExists(string taskName)
+    private static bool TaskExists(string taskName, bool throwOnTimeout = false)
     {
         using var p = Process.Start(new ProcessStartInfo(Schtasks, $"/query /tn \"{taskName}\"")
         {
@@ -102,6 +111,7 @@ public sealed class AgentController
         if (!p.WaitForExit(10_000))
         {
             KillQuietly(p);
+            if (throwOnTimeout) throw new InvalidOperationException("查询计划任务超时");
             return false;
         }
         return p.ExitCode == 0;

@@ -25,12 +25,15 @@ public static class AgentSetup
         if (!IsValidUserSid(userSid)) throw new ArgumentException("不是有效的账户 SID", nameof(userSid));
         var exe = SecurityElement.Escape(launcherExe);
         // 监控任务给启动器带一个固定参数；任务定义只有管理员能改（见 SecurityDescriptor），参数不会被用户篡改
+        var description = launcherArguments is null
+            ? "更新管理小助手的后台助手：计划任务运行的是清理过环境的原生启动器，它再以管理员身份启动后台助手，在你点更新时安装，免去每次的确认框。只运行 Program Files 里的程序，不会开机自启。"
+            : "更新管理小助手的监控模块：仅在你选择“监控一次安装”时，由清理过环境的原生启动器以管理员身份启动监控服务，记录该安装新增的文件和注册表，用于日后更干净地卸载。只运行 Program Files 里的程序，不会开机自启，空闲会自动退出。";
         var arguments = launcherArguments is null ? "" : $"\n                  <Arguments>{SecurityElement.Escape(launcherArguments)}</Arguments>";
         return $"""
             <?xml version="1.0" encoding="UTF-16"?>
             <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
               <RegistrationInfo>
-                <Description>更新管理小助手的后台助手：计划任务运行的是清理过环境的原生启动器，它再以管理员身份启动后台助手，在你点更新时安装，免去每次的确认框。只运行 Program Files 里的程序，不会开机自启。</Description>
+                <Description>{SecurityElement.Escape(description)}</Description>
                 <SecurityDescriptor>D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;GRGX;;;{userSid})</SecurityDescriptor>
               </RegistrationInfo>
               <Triggers />

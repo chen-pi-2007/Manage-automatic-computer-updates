@@ -38,7 +38,8 @@ public static class AppHost
         Security = new SecurityViewModel(backend);
         RuleSubscription = new RuleSubscriptionViewModel(backend);
         RuleSources = new RuleSourcesViewModel(backend, Confirm);
-        SettingsPage = new SettingsViewModel(Settings, backend.EnableMonitorModuleAsync);   // 关→开时一次 UAC 注册监控模式
+        SettingsPage = new SettingsViewModel(Settings, backend.EnableMonitorModuleAsync, backend.DisableMonitorModuleAsync, backend.MonitorTaskExists);   // 开/关各一次 UAC；并核对开关与任务是否一致
+        _ = SettingsPage.ReconcileMonitorModuleAsync();   // 启动时后台核对一次，不挡启动
         Agent = new AgentSettingsViewModel(backend);
         _ = Agent.RefreshAsync();   // 后台查询，不挡启动
     }

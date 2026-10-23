@@ -30,22 +30,45 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
     /// <summary>
     /// 启用监控模块：弹一次管理员确认框，部署后台助手（若还没有）并注册监控模式的计划任务（--install-monitor）。
     /// 足迹受保护区的目录与 ACL 由助手每次 --monitor-serve 启动时自己建立，这里不管。
-    /// 返回 true = 注册完成且已核对（助手就绪 + 监控任务存在）；用户取消 UAC / 失败 = false。
+    /// 返回 null = 注册完成且已核对（助手就绪 + 监控任务存在）；否则是具体中文原因（UAC 取消 / 缺启动器 / 任务被拦截…）。
     /// </summary>
-    public async Task<bool> EnableMonitorModuleAsync()
+    public async Task<string?> EnableMonitorModuleAsync()
     {
         var error = await _agent.EnableMonitorAsync();
-        if (error is not null) return false;
+        if (error is not null) return error;
         try
         {
             // 再核对一次，别把"退出码 0 但任务被杀毒拦了"当成功（查询要调 schtasks，放后台线程）
-            return await Task.Run(() => _agent.GetStatus() == AgentStatus.Ready && _agent.MonitorTaskExists());
+            var ok = await Task.Run(() => _agent.GetStatus() == AgentStatus.Ready && _agent.MonitorTaskExists());
+            return ok ? null : "注册已执行，但核对时没找到监控任务或后台助手未就绪（可能被安全软件拦截）";
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
-            return false;
+            return $"注册后核对失败：{ex.Message}";
         }
     }
+
+    /// <summary>
+    /// 关闭监控模块：弹一次管理员确认框，只删监控模式的计划任务（--disable-monitor；免确认助手自己的任务不动），
+    /// 再核对任务确实没了。null = 成功；否则是中文原因（含 UAC 取消）。
+    /// </summary>
+    public async Task<string?> DisableMonitorModuleAsync()
+    {
+        var error = await _agent.DisableMonitorAsync();
+        if (error is not null) return error;
+        try
+        {
+            var stillThere = await Task.Run(() => _agent.MonitorTaskExistsStrict());
+            return stillThere ? "删除已执行，但监控任务仍然存在" : null;
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            return $"删除后核对失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>监控任务是否存在；查询超时抛 InvalidOperationException（"不确定"，调用方别当成"不存在"）。</summary>
+    public bool MonitorTaskExists() => _agent.MonitorTaskExistsStrict();
 
     /// <summary>
     /// 监控一次安装：先确保提权的监控服务在跑，再在<b>用户上下文</b>启动所选安装器（不提权，归属才不被污染），
@@ -55,6 +78,10 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
     /// </summary>
     public async Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct)
     {
+        // 先校验安装包路径（存在的本地 .exe/.msi），不合格就不启动任何东西
+        if (MonitorInstallerPath.Validate(installerPath) is { } pathError)
+            throw new InvalidOperationException(pathError);
+
         if (!await Task.Run(() => _agent.GetStatus() == AgentStatus.Ready && _agent.MonitorTaskExists(), ct))
             throw new InvalidOperationException("监控模块还没有启用，请先到“设置”里打开“监控模块”。");
 
@@ -87,7 +114,15 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
             var request = new AgentRequest(AgentProtocol.Version, AgentOp.StartMonitor,
                 InstallerPath: installerPath, RootPid: process.Id, MonitorSessionId: Guid.NewGuid().ToString("N"));
             // 防冒充：CreateMonitorClient 要求管道另一头是 Program Files 里的后台助手（同卸载路径用的检查）
-            return await _agent.CreateMonitorClient().RunAsync(request, d => progress?.Report(d), ct);
+            try
+            {
+                return await _agent.CreateMonitorClient().RunAsync(request, d => progress?.Report(d), ct);
+            }
+            catch (AgentUnavailableException ex) when (ex.Kind != AgentFailureKind.Broken)
+            {
+                // 安装器此刻已经在跑了，但连接 / 认证助手失败：诚实说明这次安装没有被监控（中途断线 Broken 另论：会话仍在记录，可读回）
+                throw new InvalidOperationException($"安装程序已经启动，但没能连上监控服务，这次安装没有被监控：{ex.Message}", ex);
+            }
         }
     }
 

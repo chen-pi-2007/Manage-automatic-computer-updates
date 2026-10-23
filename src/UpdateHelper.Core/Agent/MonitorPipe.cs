@@ -73,11 +73,26 @@ public sealed class MonitorPipeServer(string pipeName, IMonitorHandler handler)
                 {
                     await pipe.WaitForConnectionAsync(idle.Token);
                 }
-                catch (OperationCanceledException)
+                catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException)
                 {
                     if (cancellationToken.IsCancellationRequested) return;   // 助手被要求退出
-                    if (HasActiveSession()) continue;   // 空闲到期但仍有会话在记录：清零重等，绝不砍断它
-                    return;   // 既无会话也无连接：不常驻，退出
+                    // 竞态：空闲到期的同一时刻客户端恰好连入，管道已是已连接态。
+                    // 此时再 WaitForConnectionAsync 会抛 InvalidOperationException 崩掉整个提权服务，
+                    // 而且这个客户端也不该被丢弃：直接去服务它（走下面的正常路径）。有连接就绝不退出（Ruling-6）。
+                    if (!pipe.IsConnected)
+                    {
+                        // 没有连接：被取消但未连接的实例可以直接再等（既有路径）；不在这里 DisconnectNamedPipe，
+                        // 因为复位恰好撞上此刻连入的客户端会把它砍断。
+                        if (ex is InvalidOperationException)
+                        {
+                            // 状态异常且并无连接：复位后重等（计数防止无限空转）
+                            DisconnectNamedPipe(pipe.SafePipeHandle);
+                            if (++brokenConnects >= MaxBrokenConnects) return;
+                            continue;
+                        }
+                        if (HasActiveSession()) continue;   // 空闲到期但仍有会话在记录：清零重等，绝不砍断它
+                        return;   // 既无会话也无连接：不常驻，退出
+                    }
                 }
                 catch (IOException)
                 {
