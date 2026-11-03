@@ -213,6 +213,57 @@ public class MonitorHandlerTests
     }
 
     [Fact]
+    public async Task Root_tree_exit_finalizes_as_complete_without_idle_wait()
+    {
+        // Idle/Max/RootWait 都设成 5 分钟：只有“根进程树退出”这条正常完成路径能在短时间内收尾。
+        // 若该路径没接上，测试会卡到 5 分钟（WaitAsync 兜底防止真卡住）。
+        using var rig = new Rig(limits: new MonitorLimits(
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5), TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5)));
+        var run = rig.Handler.StartAsync(@"C:\setup.exe", rig.Send, CancellationToken.None, "s1");
+        await rig.WaitStarted();
+        await rig.WaitReady();
+        rig.Handler.SetRoot("s1", Root);
+
+        // 假安装器写了一个文件就整体退出（无子进程）：根 ProcessStop 一到，会话应在根退出后立即收尾
+        rig.Source!.Push(new FileEvent(Root, Installed, true, DateTimeOffset.Now));
+        rig.Source.Push(new ProcessStopEvent(Root, DateTimeOffset.Now));
+
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var fp = Assert.Single(rig.Store.ReadAll());
+        // ① 正常完成：足迹标「完整」，且不含“静默/提前结束”这类不完整原因
+        Assert.True(fp.Completeness.IsComplete);
+        Assert.DoesNotContain(fp.Completeness.Reasons, s => s.Contains("静默") || s.Contains("提前结束"));
+        // ② 该记的照样记：安装文件按根归属为「确定」
+        Assert.Contains(fp.Entries, e => e.Path == Installed && e.Confidence == FootprintConfidence.Certain);
+        Assert.True(rig.Source.Stopped);
+        Assert.Contains(rig.Sent, r => r.Type == AgentMessageType.Footprint);
+    }
+
+    [Fact]
+    public async Task Root_tree_exit_still_incomplete_when_events_lost()
+    {
+        using var rig = new Rig(limits: new MonitorLimits(
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5), TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5)));
+        var run = rig.Handler.StartAsync(@"C:\setup.exe", rig.Send, CancellationToken.None, "s1");
+        await rig.WaitStarted();
+        await rig.WaitReady();
+        rig.Handler.SetRoot("s1", Root);
+
+        rig.Source!.Lose(3);   // 期间丢了事件
+        rig.Source.Push(new FileEvent(Root, Installed, true, DateTimeOffset.Now));
+        rig.Source.Push(new ProcessStopEvent(Root, DateTimeOffset.Now));
+
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var fp = Assert.Single(rig.Store.ReadAll());
+        // 根树干净退出走正常完成路径（不塞 early-stop），但既有完整性逻辑因丢事件仍判不完整——诚实标注
+        Assert.False(fp.Completeness.IsComplete);
+        Assert.Contains(fp.Completeness.Reasons, s => s.Contains("丢事件"));
+        Assert.DoesNotContain(fp.Completeness.Reasons, s => s.Contains("静默") || s.Contains("提前结束"));
+    }
+
+    [Fact]
     public async Task Idle_timeout_finalizes_as_incomplete()
     {
         using var rig = new Rig(limits: new MonitorLimits(

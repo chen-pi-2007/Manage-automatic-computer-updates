@@ -100,6 +100,49 @@ public sealed class ProcessTree
         }
     }
 
+    /// <summary>
+    /// 根进程树是否已整体退出：根化身已 Stop，且树内所有“曾经进入过树”的后代化身在 <paramref name="at"/> 时刻都已退出
+    /// （没有仍存活的树内进程）。用于监控的“正常完成”提前收尾——根树干净退出即收尾，不必空等满 Idle 静默。
+    /// 要点：
+    ///   · 判定基于化身（带 Start/Stop 区间）而非裸 PID，PID 复用不会误判（复用根 PID 的外来进程不算树内）；
+    ///   · 只认“曾进入过树”的后代；从未出现过子进程时，根一退出即算整树退出；
+    ///   · 根 ProcessStop 可能晚到或丢失——此时返回 false，交由 Idle/Max 兜底，两者不冲突。
+    /// </summary>
+    public bool RootTreeHasExited(DateTimeOffset at)
+    {
+        lock (_lock)
+        {
+            Incarnation? root = null;
+            foreach (var list in _byPid.Values)
+                foreach (var inc in list)
+                    if (inc.IsRoot) root = inc;
+
+            // 根化身尚未退出（或根 ProcessStop 事件还没到/丢了）→ 不算整树退出
+            if (root is null || root.Stop is null || root.Stop > at) return false;
+
+            // 还有任何“树内”化身在 at 时刻仍存活 → 整树尚未退出
+            foreach (var list in _byPid.Values)
+                foreach (var inc in list)
+                {
+                    var aliveAtAt = inc.Start <= at && (inc.Stop is null || inc.Stop > at);
+                    if (aliveAtAt && InTree(inc)) return false;
+                }
+            return true;
+        }
+    }
+
+    // 该化身是否属于根进程树：沿父链上溯（父按子的启动时刻定位，避开复用 PID）能到达根化身
+    private bool InTree(Incarnation inc)
+    {
+        var cur = inc;
+        for (var depth = 0; cur is not null && depth < 256; depth++)
+        {
+            if (cur.IsRoot) return true;
+            cur = Find(cur.ParentPid, cur.Start);
+        }
+        return false;
+    }
+
     // 找 at 时刻存活的化身：Start <= at 且（未退出 或 at <= Stop）；多个时取最晚启动的
     private Incarnation? Find(int pid, DateTimeOffset at)
     {

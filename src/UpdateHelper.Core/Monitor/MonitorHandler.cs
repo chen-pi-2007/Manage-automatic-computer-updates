@@ -74,6 +74,9 @@ public sealed class MonitorHandler(
         public IMonitorSource? Source;
         public readonly HashSet<string> Announced = new(StringComparer.OrdinalIgnoreCase);
         public long LastActivityTicks;
+        // 首次观察到“根进程树已整体退出”的时刻（UtcTicks，0=尚未观察到）。根树一旦退出不会复活，无需重置。
+        // 用于在根退出后略等一个“收尾静默”窗口，给慢到的尾随事件一点落袋时间；仅轮询循环单线程读写。
+        public long RootExitedSinceTicks;
         public int Announcements;
         public bool Finished;   // 写入受 _gate 保护；事件回调里用 Volatile 读
         public readonly TaskCompletionSource<MonitorFootprint?> Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -171,6 +174,19 @@ public sealed class MonitorHandler(
                     continue;
                 }
 
+                // 正常完成（Ruling-9）：根进程树已整体退出（根及所有已观察到的后代化身都已 Stop）→ 立即收尾并标「完整」，
+                // 不塞任何 early-stop 原因（完整与否仍由累积器既有逻辑按 EventsLost/模糊项判定，这里只是“不额外塞原因”）。
+                // 根退出即收尾（秒级），不再空转到 Idle 才结束，顺带把抓取窗口缩到最短、避免吸全系统内核噪声（EventsLost 应趋近 0）。
+                // 根 ProcessStop 若晚到/丢失则此路径不触发，仍由下方 Idle/Max 兜底，两者不冲突。
+                if (session.Tree!.RootTreeHasExited(t))
+                {
+                    if (session.RootExitedSinceTicks == 0)
+                        session.RootExitedSinceTicks = t.UtcTicks;                 // 记录首次观察到退出
+                    if (t.UtcTicks - session.RootExitedSinceTicks >= limits.Poll.Ticks)
+                        Finish(session, null);                                     // 收尾静默已过：正常完成、标「完整」
+                    continue;   // 根树已退出，这一轮不再走 Idle/Max（收尾只等那一个很短的静默窗口）
+                }
+
                 if (t - session.Start >= limits.Max)
                     Finish(session, $"监控达到最长时长（{limits.Max.TotalMinutes:0.#} 分钟），已自动结束");
                 else if (t.UtcTicks - Interlocked.Read(ref session.LastActivityTicks) >= limits.Idle.Ticks)
@@ -253,11 +269,14 @@ public sealed class MonitorHandler(
     }
 
     /// <summary>
-    /// 唯一的收尾入口（幂等）：停源 → 标提前结束原因 → Finalize → 落盘 → 释放单例。
-    /// 多个路径（Stop/超时/退出）可能同时来，只有第一个执行，其余等同一份结果。
+    /// 唯一的收尾入口（幂等）：停源 →（可选）标提前结束原因 → Finalize → 落盘 → 释放单例。
+    /// 多个路径（Stop/超时/退出/根树退出）可能同时来，只有第一个执行，其余等同一份结果。
+    /// earlyStopReason 为 null 表示“正常完成”（根进程树干净退出）：不记任何 early-stop 原因，完整与否
+    /// 仍由 FootprintAccumulator 的既有逻辑（EventsLost/模糊项）决定；非 null 则是 Idle/Max/Stop/未收到根 PID/
+    /// 助手退出等“不完整”兜底路径，诚实标注之后动作可能漏记。
     /// 注意锁序：绝不同时持有 _gate 与 s.Ingest（SetRoot 先 _gate 再 Ingest，这里分段持有，避免 AB-BA 死锁）。
     /// </summary>
-    private MonitorFootprint? Finish(Session s, string earlyStopReason)
+    private MonitorFootprint? Finish(Session s, string? earlyStopReason)
     {
         lock (_gate)
         {
@@ -272,8 +291,8 @@ public sealed class MonitorHandler(
         {
             // 始终没拿到根 PID：用占位根（0）建空账，缓冲里的真实事件都归不到树，得到一份“未收到根进程号”的不完整足迹
             if (s.Acc is null) EnsureRooted(s, 0);
-            s.Acc!.RecordEarlyStop(earlyStopReason);
-            footprint = s.Acc.Finalize(s.Id, probe, now());
+            if (earlyStopReason is not null) s.Acc!.RecordEarlyStop(earlyStopReason);
+            footprint = s.Acc!.Finalize(s.Id, probe, now());
         }
 
         try { store.Save(footprint); }
