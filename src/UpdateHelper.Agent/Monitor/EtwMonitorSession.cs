@@ -14,6 +14,9 @@ namespace UpdateHelper.Agent.Monitor;
 public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> onEventsLost) : IMonitorSource
 {
     private readonly DeviceMap _devices = new();
+    // KCB 句柄 → 键全路径 的兜底关联表（见 RegistryKeyPathTable 注释）。
+    // 只在 pump 线程上被各注册表回调串行读写，无需加锁。
+    private readonly RegistryKeyPathTable _regKeys = new();
     private TraceEventSession? _session;
     private Thread? _pump;
     private Timer? _lostPoller;
@@ -56,6 +59,18 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
             _session = new TraceEventSession(MonitorSessionName)
             {
                 StopOnDispose = true,   // 我们退出时一定要关掉内核会话，否则会一直占着私有槽位
+
+                // 调大 OS 为会话预留的缓冲总量，减少"忙碌机器 + 全系统内核事件"下的缓冲溢出丢事件。
+                // 真机冒烟里实时会话用的是默认的小缓冲，一忙就 EventsLost>0、足迹几乎总被标不完整。
+                //   · BufferSizeMB 是【必须在 EnableKernelProvider 之前】设置的属性（之后设无效）；
+                //     文档语义是"OS 为避免丢包而预留的缓冲大小(MB)"——对文件会话默认 64MB，实时会话默认更小，
+                //     这里显式拉到 256MB，给一次正常小安装在忙碌机器上留出足够余量，又不至于吃光内存。
+                //   · 私有 system-logger / 内核会话对 BufferSizeMB、BufferQuantumKB 这类标准 ETW 缓冲属性
+                //     是支持的（它们最终落到 EVENT_TRACE_PROPERTIES 的 BufferSize/Min/MaxBuffers）；
+                //     BufferQuantumKB 保持默认 64KB（每缓冲单元大小），不动以免限制单条事件可承载的大小。
+                // 注意：缓冲再大也只能降低、不能保证消除丢失——平均到达速率长期超过处理速率时仍会丢。
+                // 因此完整性判定【保持诚实】：下面 ReportLost 仍按 EventsLost>0 如实标"不完整"，不靠放宽判定掩盖丢失。
+                BufferSizeMB = 256,
             };
             _session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.FileIOInit
@@ -144,14 +159,30 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
             Emit(new FileEvent(d.ProcessID, path, IsCreate: false, Ts(d.TimeStamp), serial));
         };
 
+        // 键事件（NameIsKeyName=true，载荷自带键全路径 + KCB 句柄）：既产出足迹，也【喂养】KCB 关联表，
+        // 供随后同一句柄上的 SetValue/DeleteValue 在自带 KeyName 为空时回查。
         k.RegistryCreate += d =>
+        {
+            _regKeys.Record(d.KeyHandle, d.KeyName);
             Emit(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), null, MonitorEventKind.RegistryCreate, Ts(d.TimeStamp)));
+        };
+        // 打开已有键：不是改动，不产出足迹，但要记下 句柄→全路径，让后续对【已存在键】的 SetValue 也能解析出键路径。
+        k.RegistryOpen += d => _regKeys.Record(d.KeyHandle, d.KeyName);
+        // KCB 创建/枚举(rundown) 事件：TraceEvent 内部也靠它们建映射；我们同样记一份作兜底
+        // （内部映射因丢事件/句柄复用解析不出时顶上）。这些事件由 Registry 关键字自带，订阅它们不增加 ETW 事件量。
+        k.RegistryKCBCreate += d => _regKeys.Record(d.KeyHandle, d.KeyName);
+        k.RegistryKCBRundownBegin += d => _regKeys.Record(d.KeyHandle, d.KeyName);
+        k.RegistryKCBDelete += d => _regKeys.Forget(d.KeyHandle);
+
+        // 值事件（NameIsKeyName=false，载荷只有值名，键靠 KCB 句柄）：键路径优先用事件自带 KeyName
+        // （TraceEvent 已解析成功的常态），为空时用句柄回查兜底表——这正是修复"条目只剩值名、键路径丢失"的关键。
         k.RegistrySetValue += d =>
-            Emit(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), NullIfEmpty(d.ValueName), MonitorEventKind.RegistrySet, Ts(d.TimeStamp)));
+            Emit(new RegistryEvent(d.ProcessID, RegPath(_regKeys.Resolve(d.KeyHandle, d.KeyName)), NullIfEmpty(d.ValueName), MonitorEventKind.RegistrySet, Ts(d.TimeStamp)));
+        // 删除键：键事件，KeyName 常态自带；仍走 Resolve 以防自带为空时用兜底表补上。
         k.RegistryDelete += d =>
-            Emit(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), null, MonitorEventKind.RegistryDelete, Ts(d.TimeStamp)));
+            Emit(new RegistryEvent(d.ProcessID, RegPath(_regKeys.Resolve(d.KeyHandle, d.KeyName)), null, MonitorEventKind.RegistryDelete, Ts(d.TimeStamp)));
         k.RegistryDeleteValue += d =>
-            Emit(new RegistryEvent(d.ProcessID, RegPath(d.KeyName), NullIfEmpty(d.ValueName), MonitorEventKind.RegistryDelete, Ts(d.TimeStamp)));
+            Emit(new RegistryEvent(d.ProcessID, RegPath(_regKeys.Resolve(d.KeyHandle, d.KeyName)), NullIfEmpty(d.ValueName), MonitorEventKind.RegistryDelete, Ts(d.TimeStamp)));
 
         // 驱动加载：.sys 映像被加载（ProcessID 通常是 4 = System，归属由 Core 判断）
         k.ImageLoad += d =>

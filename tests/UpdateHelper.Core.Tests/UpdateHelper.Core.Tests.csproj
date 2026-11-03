@@ -27,6 +27,8 @@
     <!-- Agent 是 WinExe（带 RID），不能被引用；链接采集器源码，测会话名常量与失败文案（不真起内核会话） -->
     <Compile Include="..\..\src\UpdateHelper.Agent\Monitor\EtwMonitorSession.cs" Link="Linked\EtwMonitorSession.cs" />
     <Compile Include="..\..\src\UpdateHelper.Agent\Monitor\DeviceMap.cs" Link="Linked\DeviceMap.cs" />
+    <!-- KCB 句柄→键全路径 兜底表：纯逻辑，链接进来单测 -->
+    <Compile Include="..\..\src\UpdateHelper.Agent\Monitor\RegistryKeyPathTable.cs" Link="Linked\RegistryKeyPathTable.cs" />
   </ItemGroup>
 
 </Project>
