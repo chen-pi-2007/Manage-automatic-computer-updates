@@ -31,19 +31,31 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
     // FILE_DIRECTORY_FILE：这是在开目录。Ruling-4：本阶段不记目录，目录靠里面的文件体现
     private const uint FileDirectoryFile = 0x1;
 
+    /// <summary>
+    /// 监控专用的内核会话名：故意【不用】KernelTraceEventParser.KernelSessionName（"NT Kernel Logger"）。
+    /// 在 Win8+ 上，TraceEvent 对"非 NT Kernel Logger 名 + EnableKernelProvider"会走私有 system-logger
+    /// 槽位（EVENT_TRACE_SYSTEM_LOGGER_MODE），可与反作弊/游戏守护（腾讯 ACE/TP、douyin_guard 等）
+    /// 占用的 NT Kernel Logger 【并存】——那正是真机冒烟暴露、本次改动要解决的问题。
+    /// 名字取应用专属常量，确保全系统只有我们自己会用这个名字。
+    /// </summary>
+    public const string MonitorSessionName = "UpdateHelperMonitorKernel";
+
     public void Start()
     {
-        // 关键：TraceEventSession 的构造函数遇到同名会话会【先把它停掉】，
-        // 那会直接杀掉用户正在用的 Process Monitor 等工具的跟踪。所以先查有没有人占着，有就明确报错。
-        if (TraceEventSession.GetActiveSessionNames().Contains(KernelTraceEventParser.KernelSessionName,
-                StringComparer.OrdinalIgnoreCase))
-            throw new MonitorUnavailableException(OccupiedMessage);
-
+        // 走 Win8+ 私有内核会话：用我们自己的专属会话名，与反作弊占着的 NT Kernel Logger 并存。
+        // 我们这里采集的四类 Keywords（FileIOInit / Registry / Process / ImageLoad）都是 OS 内核关键字，
+        // 不属于 TraceEvent 的 NonOSKeywords，私有 system-logger 会话【全部受支持】，不会因并存而漏记。
+        //
+        // 关于同名残留与"不抢占"性质：
+        //   · TraceEventSession 的默认（创建）模式在 EnableKernelProvider 时，会把【同名】会话先停掉再重建，
+        //     由于 MonitorSessionName 是我们专属的名字，被停掉的只可能是上次崩溃/被杀留下的【我们自己】的残留会话——停自己安全；
+        //   · TraceEventSession.Stop() 只针对本会话自己的名字，从不枚举、从不停别人的会话（包括 NT Kernel Logger）。
+        //   因此旧代码里"先查 NT Kernel Logger 是否被占、被占就拒绝"的逻辑【整段删除】：NT Kernel Logger 被反作弊占着是常态，正是我们要共存的对象。
         try
         {
-            _session = new TraceEventSession(KernelTraceEventParser.KernelSessionName)
+            _session = new TraceEventSession(MonitorSessionName)
             {
-                StopOnDispose = true,   // 我们退出时一定要关掉内核会话，否则会一直占着
+                StopOnDispose = true,   // 我们退出时一定要关掉内核会话，否则会一直占着私有槽位
             };
             _session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.FileIOInit
@@ -52,12 +64,12 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
                 | KernelTraceEventParser.Keywords.ImageLoad);
         }
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException
-                                       or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                                       or UnauthorizedAccessException or System.ComponentModel.Win32Exception
+                                       or NotSupportedException)
         {
             _session?.Dispose();
             _session = null;
-            throw new MonitorUnavailableException(
-                "无法开启内核跟踪：" + ex.Message + "。请确认以管理员身份运行，并关闭 Process Monitor 等占用内核跟踪的工具后重试。", ex);
+            throw new MonitorUnavailableException(UnavailableMessage(ex.Message), ex);
         }
 
         Subscribe(_session.Source.Kernel);
@@ -78,8 +90,14 @@ public sealed class EtwMonitorSession(Action<MonitorEvent> onEvent, Action<int> 
         _pump.Start();
     }
 
-    private const string OccupiedMessage =
-        "内核跟踪（NT Kernel Logger）正被其他工具占用。请关闭 Process Monitor、Resource Monitor 等占用内核跟踪的工具后重试。";
+    /// <summary>
+    /// 私有内核会话创建失败时面向用户的中文提示：私有 system-logger 槽位系统上限约 8 个，
+    /// 槽位耗尽、当前系统不支持私有内核跟踪、或无管理员权限等都可能导致失败。
+    /// 不再误导用户去关 Process Monitor——本会话与 NT Kernel Logger 井水不犯河水，关不关它都不影响我们。
+    /// </summary>
+    internal static string UnavailableMessage(string detail) =>
+        "无法创建监控用的内核跟踪会话（可能系统内核跟踪槽位已满，或当前系统/权限不支持私有内核跟踪）："
+        + detail + "。请稍后重试，或重启后再试。";
 
         /// <summary>
     /// 回调里 Core/通道抛异常时绝不能让提权 Agent 崩：吞掉并按一次丢失上报（Core 据此标不完整）。
