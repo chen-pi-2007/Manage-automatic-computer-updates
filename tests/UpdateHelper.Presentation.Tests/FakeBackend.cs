@@ -40,8 +40,15 @@ public sealed class FakeBackend : IAppBackend
     public Task<string?> EnableMonitorModuleAsync() => Task.FromResult(OnEnableMonitorModule());
     public Task<string?> DisableMonitorModuleAsync() => Task.FromResult(OnDisableMonitorModule());
     public bool MonitorTaskExists() => OnMonitorTaskExists();
-    public Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct) =>
-        throw new NotSupportedException("监控安装只在真实后端里有；界面测试不走这条。");
+    /// <summary>监控安装的假实现：默认不支持；测试里设置它来返回足迹、上报进度或抛出中文错误。</summary>
+    public Func<string, IProgress<DiscoveryItem>?, Task<MonitorFootprint>> OnStartMonitoredInstall { get; set; } =
+        (_, _) => throw new NotSupportedException("监控安装只在真实后端里有；界面测试不走这条。");
+    public string? LastMonitoredInstaller { get; private set; }
+    public Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct)
+    {
+        LastMonitoredInstaller = installerPath;
+        return OnStartMonitoredInstall(installerPath, progress);
+    }
     public IReadOnlyList<MonitorFootprint> ReadFootprints() => Footprints;
 
     public int ScanCalls { get; private set; }

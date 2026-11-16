@@ -6,7 +6,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
     <!-- 全仓统一的版本号（唯一来源）：App / Agent / 启动器 / Core 都从这里取，发版只改这一处 -->
-    <Version>0.8.0</Version>
+    <Version>0.9.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <!-- TraceEvent 3.1.9 传递依赖老旧的 Microsoft.NETCore.Jit 1.0.2（GHSA-xcvr-qv8h-m7xw，NU1903）。

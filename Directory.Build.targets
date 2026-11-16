@@ -1,0 +1,27 @@
+<Project>
+  <!--
+    带运行时一起发给用户的产物（自包含的便携版、Native AOT 的启动器），固定用已修复安全漏洞的运行时补丁版本：
+    10.0.14 修复了 GHSA-p3jp-9v83-76w9（Brotli 解压缓冲区溢出）。SDK 自带的补丁版本可能更旧，这里显式指定更新的。
+    放在 .targets 而不是 .props：要等项目文件设完 PublishAot 后才能判断。
+    框架依赖的构建（日常开发、测试、“需要 .NET 10”的小体积版）不改，用机器上装的运行时，
+    否则运行时补丁低于这里的机器上程序会起不来。
+  -->
+  <PropertyGroup>
+    <UhPatchedRuntimeVersion>10.0.15</UhPatchedRuntimeVersion>
+  </PropertyGroup>
+
+  <!-- 自包含：只改 .NET 运行时与桌面运行时这几个框架的“最新补丁版本”。
+       不能用 RuntimeFrameworkVersion：它会连 Windows SDK 投影包（Microsoft.Windows.SDK.NET.Ref）的版本一起改坏 -->
+  <Target Name="UhUsePatchedRuntimePack" BeforeTargets="ProcessFrameworkReferences" Condition="'$(SelfContained)' == 'true'">
+    <ItemGroup>
+      <KnownFrameworkReference Update="@(KnownFrameworkReference)"
+                               Condition="'%(TargetFramework)' == 'net10.0' and ('%(Identity)' == 'Microsoft.NETCore.App' or '%(Identity)' == 'Microsoft.WindowsDesktop.App' or '%(Identity)' == 'Microsoft.WindowsDesktop.App.WPF' or '%(Identity)' == 'Microsoft.WindowsDesktop.App.WindowsForms')"
+                               LatestRuntimeFrameworkVersion="$(UhPatchedRuntimeVersion)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Native AOT（启动器，不引用 Windows SDK 投影包）：运行时与 AOT 编译器都跟着这个版本走 -->
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <RuntimeFrameworkVersion>$(UhPatchedRuntimeVersion)</RuntimeFrameworkVersion>
+  </PropertyGroup>
+</Project>

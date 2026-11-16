@@ -22,6 +22,7 @@ public static class AppHost
     internal static IAppBackend Backend { get; private set; } = null!;
     public static SettingsViewModel SettingsPage { get; private set; } = null!;
     public static AgentSettingsViewModel Agent { get; private set; } = null!;
+    public static MonitorInstallViewModel MonitorInstall { get; private set; } = null!;
 
     public static void Initialize()
     {
@@ -40,7 +41,20 @@ public static class AppHost
         RuleSources = new RuleSourcesViewModel(backend, Confirm);
         SettingsPage = new SettingsViewModel(Settings, backend.EnableMonitorModuleAsync, backend.DisableMonitorModuleAsync, backend.MonitorTaskExists);   // 开/关各一次 UAC；并核对开关与任务是否一致
         _ = SettingsPage.ReconcileMonitorModuleAsync();   // 启动时后台核对一次，不挡启动
+        MonitorInstall = new MonitorInstallViewModel(backend, Settings, PickInstaller);
         Agent = new AgentSettingsViewModel(backend);
         _ = Agent.RefreshAsync();   // 后台查询，不挡启动
+    }
+
+    /// <summary>"监控安装"用的文件选择框：只列安装程序；取消返回 null。</summary>
+    private static string? PickInstaller()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择要监控安装的安装程序",
+            Filter = "安装程序 (*.exe;*.msi)|*.exe;*.msi",
+            CheckFileExists = true,
+        };
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
     }
 }

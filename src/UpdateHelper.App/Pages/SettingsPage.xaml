@@ -110,6 +110,43 @@
                 <ui:ToggleSwitch IsChecked="{Binding MonitorModuleEnabled}" IsEnabled="{Binding MonitorToggleEnabled}" />
             </ui:CardControl>
 
+            <Border Margin="0,4,0,0" Padding="16,12" CornerRadius="4"
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                    DataContext="{Binding Source={x:Static app:AppHost.MonitorInstall}}">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,16,0">
+                            <TextBlock Text="监控安装" />
+                            <TextBlock Text="{Binding Note}" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+                            <TextBlock Text="需要先打开上面的「监控模块」。" FontSize="12" Opacity="0.7" />
+                        </StackPanel>
+                        <ui:Button Grid.Column="1" Content="选择安装程序并监控…" Appearance="Primary"
+                                   Command="{Binding StartCommand}" VerticalAlignment="Center" />
+                    </Grid>
+                    <ui:ProgressRing IsIndeterminate="True" Width="20" Height="20" HorizontalAlignment="Left" Margin="0,8,0,0"
+                                     Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock Text="{Binding Message}" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0" />
+                    <TextBlock Text="{Binding ResultTitle}" FontWeight="SemiBold" Margin="0,10,0,0" />
+                    <TextBlock Text="{Binding Summary}" FontSize="12" Opacity="0.8" />
+                    <TextBlock Text="{Binding CompletenessText}" FontSize="12" Opacity="0.8" TextWrapping="Wrap" />
+                    <ui:DataGrid ItemsSource="{Binding Entries}" AutoGenerateColumns="False" CanUserAddRows="False"
+                                 HeadersVisibility="Column" SelectionMode="Single" IsReadOnly="True"
+                                 MaxHeight="360" Margin="0,8,0,0">
+                        <ui:DataGrid.Columns>
+                            <DataGridTextColumn Header="类型" Binding="{Binding Kind}" Width="80" />
+                            <DataGridTextColumn Header="可信度" Binding="{Binding Confidence}" Width="80" />
+                            <DataGridTextColumn Header="变化" Binding="{Binding Change}" Width="64" />
+                            <DataGridTextColumn Header="位置" Binding="{Binding Path}" Width="*" />
+                        </ui:DataGrid.Columns>
+                    </ui:DataGrid>
+                </StackPanel>
+            </Border>
+
             <TextBlock Text="外观" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,8" />
             <ui:CardControl>
                 <ui:CardControl.Header>
