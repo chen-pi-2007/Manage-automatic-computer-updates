@@ -39,7 +39,7 @@ public sealed record MonitorLimits(TimeSpan Idle, TimeSpan Max, TimeSpan Poll, T
 /// </summary>
 public sealed class MonitorHandler(
     MonitorSourceFactory sourceFactory, MonitorFootprintStore store, IFootprintProbe probe,
-    Func<DateTimeOffset> now, MonitorLimits limits) : IMonitorHandler
+    Func<DateTimeOffset> now, MonitorLimits limits, ISystemInventory? inventory = null) : IMonitorHandler
 {
     // 流式发现的上限：安装包可能创建成千上万个文件，全推给 App 既没意义也会拖慢管道；完整信息在最终足迹里
     private const int MaxDiscoveries = 2000;
@@ -68,6 +68,10 @@ public sealed class MonitorHandler(
         public int DroppedBeforeRoot;                        // 缓冲超限丢弃的事件数
         public int LostBeforeRoot;                           // 建树前 ETW 丢失数（建树后转入 Acc）
         public ProcessTree? Tree;                            // SetRoot 后建立
+        public bool HasRealRoot;                             // 拿到了真实根 PID（占位根 0 不算）
+        // 监控开始前的系统名册（服务/驱动/计划任务）；收尾时再取一次求差集。取失败则 InventoryFailed=true
+        public HashSet<(FootprintEntryType Type, string Name)>? InventoryBefore;
+        public bool InventoryFailed;
         public FootprintAccumulator? Acc;                    // 非空即“已拿到根 PID”，实时事件走摄入而非缓冲
 
         public Func<AgentResponse, Task> Send = _ => Task.CompletedTask;
@@ -128,6 +132,13 @@ public sealed class MonitorHandler(
                 if (session.Acc is null) session.LostBeforeRoot += n;
                 else session.Acc.RecordEventsLost(n);
             }
+        }
+
+        // 先取一次系统名册，再开始抓事件：安装器是收到 Ready 之后才启动的，这里取到的一定是“装之前”的样子
+        if (inventory is not null)
+        {
+            try { session.InventoryBefore = ToSet(inventory.Snapshot()); }
+            catch (Exception) { session.InventoryFailed = true; }
         }
 
         try
@@ -243,6 +254,7 @@ public sealed class MonitorHandler(
     /// </summary>
     private void EnsureRooted(Session s, int rootPid)
     {
+        s.HasRealRoot = rootPid != 0;
         s.Tree = new ProcessTree(rootPid, DelegateImages.Default);
         s.Acc = new FootprintAccumulator(s.Tree, s.Start, rootPid, s.RootExe);
         if (s.LostBeforeRoot > 0) s.Acc.RecordEventsLost(s.LostBeforeRoot);
@@ -286,11 +298,26 @@ public sealed class MonitorHandler(
 
         try { s.Source?.Stop(); } catch (Exception) { /* 停源失败不影响已收集数据的收尾 */ }
 
+        // 再取一次系统名册（磁盘/注册表 IO，放在锁外）：和开始时的差集就是这段时间新出现的服务/驱动/计划任务
+        List<InventoryItem>? added = null;
+        var inventoryFailed = s.InventoryFailed;
+        if (inventory is not null && s.InventoryBefore is { } before)
+        {
+            try { added = inventory.Snapshot().Where(i => !before.Contains((i.Type, i.Name.ToUpperInvariant()))).ToList(); }
+            catch (Exception) { inventoryFailed = true; }
+        }
+
         MonitorFootprint footprint;
         lock (s.Ingest)
         {
             // 始终没拿到根 PID：用占位根（0）建空账，缓冲里的真实事件都归不到树，得到一份“未收到根进程号”的不完整足迹
             if (s.Acc is null) EnsureRooted(s, 0);
+            // 安装器根本没跑起来时，名册差集和它无关，不往足迹里记
+            if (s.HasRealRoot)
+            {
+                if (added is not null) s.Acc!.AddInventoryAdditions(added, now());
+                if (inventoryFailed) s.Acc!.RecordInventoryUnavailable();
+            }
             if (earlyStopReason is not null) s.Acc!.RecordEarlyStop(earlyStopReason);
             footprint = s.Acc!.Finalize(s.Id, probe, now());
         }
@@ -310,6 +337,10 @@ public sealed class MonitorHandler(
         return footprint;
     }
 
+    // 名册项的身份：类型 + 名字（不分大小写）
+    private static HashSet<(FootprintEntryType, string)> ToSet(IEnumerable<InventoryItem> items) =>
+        items.Select(i => (i.Type, i.Name.ToUpperInvariant())).ToHashSet();
+
     private void ReleaseWithoutSaving(Session s)
     {
         lock (_gate)
@@ -325,7 +356,8 @@ public sealed class MonitorHandler(
     private static DiscoveryItem? DiscoveryOf(MonitorEvent e) => e switch
     {
         FileEvent { IsCreate: true } f => new DiscoveryItem(FootprintEntryType.File, f.Path, FootprintConfidence.Possible),
-        RegistryEvent { Kind: MonitorEventKind.RegistryCreate } r => new DiscoveryItem(
+        FileRenameEvent m => new DiscoveryItem(FootprintEntryType.File, m.NewPath, FootprintConfidence.Possible),
+        RegistryEvent { KeyPath.Length: > 0 } r when r.Kind == MonitorEventKind.RegistryCreate || r.IsNew => new DiscoveryItem(
             string.IsNullOrEmpty(r.ValueName) ? FootprintEntryType.RegistryKey : FootprintEntryType.RegistryValue,
             string.IsNullOrEmpty(r.ValueName) ? r.KeyPath : r.KeyPath + "\\" + r.ValueName, FootprintConfidence.Possible),
         ServiceOrDriverEvent s => new DiscoveryItem(s.IsDriver ? FootprintEntryType.Driver : FootprintEntryType.Service,

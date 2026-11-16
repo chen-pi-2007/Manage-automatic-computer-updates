@@ -148,4 +148,92 @@ public class FootprintAccumulatorTests
         Assert.All(fp.Entries.Where(x => x.Type != FootprintEntryType.File),
             x => Assert.Equal(FootprintConfidence.Certain, x.Confidence));
     }
+
+    // —— 真机复现的缺口 ——
+
+    private const string Dir = @"C:\Program Files\Foo";
+
+    [Fact]
+    public void Temp_file_renamed_to_final_name_is_recorded_as_new_under_final_name()
+    {
+        var acc = NewAcc();
+        acc.Observe(new FileEvent(Root, Dir + @"\final.dat.tmp", true, T(1)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\final.dat.tmp", Dir + @"\final.dat", T(2)));
+        var e = Assert.Single(acc.Finalize("id", new FakeProbe(), T(10)).Entries);
+        Assert.Equal(Dir + @"\final.dat", e.Path);
+        Assert.True(e.IsNew);
+        Assert.Equal(FootprintConfidence.Certain, e.Confidence);
+    }
+
+    [Fact]
+    public void Renaming_a_preexisting_file_is_not_new()
+    {
+        var acc = NewAcc();
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\old.cfg", Dir + @"\new.cfg", T(1)));
+        var e = Assert.Single(acc.Finalize("id", new FakeProbe(), T(10)).Entries);
+        Assert.False(e.IsNew);   // 原本就有的文件：只算动过，删除时不能当软件新建的
+    }
+
+    [Fact]
+    public void Renaming_a_directory_moves_files_already_recorded_inside_it()
+    {
+        var acc = NewAcc();
+        acc.Observe(new FileEvent(Root, Dir + @"\staging\a.dll", true, T(1)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\staging", Dir + @"\bin", T(2)));
+        var probe = new FakeProbe();
+        probe.Missing.Add(Dir + @"\staging\a.dll");
+        probe.Missing.Add(Dir + @"\bin");   // 目录本身不是文件条目，复验按文件判
+        var fp = acc.Finalize("id", probe, T(10));
+        var moved = Assert.Single(fp.Entries, x => x.Path == Dir + @"\bin\a.dll");
+        Assert.True(moved.IsNew);
+    }
+
+    [Fact]
+    public void New_value_under_existing_key_is_new_but_overwritten_value_is_not()
+    {
+        var acc = NewAcc();
+        acc.Observe(new RegistryEvent(Root, @"HKCU\Software\Pre", "Added", MonitorEventKind.RegistrySet, T(1), IsNew: true));
+        acc.Observe(new RegistryEvent(Root, @"HKCU\Software\Pre", "Changed", MonitorEventKind.RegistrySet, T(2), IsNew: false));
+        var fp = acc.Finalize("id", new FakeProbe(), T(10));
+        Assert.True(fp.Entries.Single(x => x.Path.EndsWith("Added")).IsNew);
+        Assert.False(fp.Entries.Single(x => x.Path.EndsWith("Changed")).IsNew);
+    }
+
+    [Fact]
+    public void Registry_change_without_resolved_key_marks_incomplete_only_when_in_tree()
+    {
+        var acc = NewAcc();
+        acc.Observe(new RegistryEvent(Root, "", "X", MonitorEventKind.RegistrySet, T(1)));
+        acc.Observe(new RegistryEvent(9999, "", "Y", MonitorEventKind.RegistrySet, T(1)));   // 树外的不算
+        var fp = acc.Finalize("id", new FakeProbe(), T(10));
+        Assert.Empty(fp.Entries);
+        Assert.False(fp.Completeness.IsComplete);
+        Assert.Contains(fp.Completeness.Reasons, r => r.Contains("1 处注册表改动"));
+    }
+
+    [Fact]
+    public void System_registry_noise_is_dropped()
+    {
+        var acc = NewAcc();
+        acc.Observe(new RegistryEvent(Root,
+            @"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist\{GUID}\Count", "x",
+            MonitorEventKind.RegistrySet, T(1), IsNew: true));
+        Assert.Empty(acc.Finalize("id", new FakeProbe(), T(10)).Entries);
+    }
+
+    [Fact]
+    public void Inventory_additions_are_possible_entries_and_failure_marks_incomplete()
+    {
+        var acc = NewAcc();
+        acc.AddInventoryAdditions([new InventoryItem(FootprintEntryType.ScheduledTask, @"\FooUpdater")], T(5));
+        var fp = acc.Finalize("id", new FakeProbe(), T(10));
+        var e = Assert.Single(fp.Entries);
+        Assert.Equal(FootprintEntryType.ScheduledTask, e.Type);
+        Assert.Equal(FootprintConfidence.Possible, e.Confidence);
+        Assert.True(fp.Completeness.IsComplete);
+
+        var acc2 = NewAcc();
+        acc2.RecordInventoryUnavailable();
+        Assert.False(acc2.Finalize("id", new FakeProbe(), T(10)).Completeness.IsComplete);
+    }
 }

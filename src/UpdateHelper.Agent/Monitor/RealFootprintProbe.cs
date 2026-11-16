@@ -18,7 +18,6 @@ public sealed class RealFootprintProbe : IFootprintProbe
             switch (e.Type)
             {
                 case FootprintEntryType.File:
-                case FootprintEntryType.Driver:
                     return File.Exists(e.Path);
                 case FootprintEntryType.Directory:   // 本阶段不产出，仅为完整性保留
                     return Directory.Exists(e.Path);
@@ -32,7 +31,10 @@ public sealed class RealFootprintProbe : IFootprintProbe
                     return key is not null && key.GetValue(e.Path[(i + 1)..]) is not null;
                 }
                 case FootprintEntryType.Service:
+                case FootprintEntryType.Driver:   // 驱动也是服务键下的一项，名字即服务名
                     using (var s = OpenKey(@"HKLM\SYSTEM\CurrentControlSet\Services\" + e.Path)) return s is not null;
+                case FootprintEntryType.ScheduledTask:   // 名字形如 \Vendor\Updater，对应 System32\Tasks 下的任务文件
+                    return File.Exists(Path.Combine(RealSystemInventory.TasksRoot, e.Path.TrimStart('\\')));
                 default:
                     return true;
             }

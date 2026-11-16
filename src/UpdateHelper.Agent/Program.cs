@@ -91,7 +91,7 @@ if (args.Contains("--monitor-serve"))
     var monitorHandler = new MonitorHandler(
         (onEvent, onLost) => new EtwMonitorSession(onEvent, onLost),
         new MonitorFootprintStore(MonitorFootprintStore.ProtectedRoot, () => DateTimeOffset.Now),
-        new RealFootprintProbe(), () => DateTimeOffset.Now, MonitorLimits.Default);
+        new RealFootprintProbe(), () => DateTimeOffset.Now, MonitorLimits.Default, new RealSystemInventory());
     var monitorServer = new MonitorPipeServer(AgentPaths.MonitorPipeName(AgentPaths.CurrentUserSid()), monitorHandler);
     // 不常驻：既没有监控会话在跑、也没有客户端连着，空闲 2 分钟（与 --serve 同量级）就退出，不吃性能
     await monitorServer.RunAsync(TimeSpan.FromMinutes(2), CancellationToken.None);

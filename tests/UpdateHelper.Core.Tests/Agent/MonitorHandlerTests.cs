@@ -35,7 +35,7 @@ public class MonitorHandlerTests
         public readonly List<AgentResponse> Sent = [];
         public readonly MonitorHandler Handler;
 
-        public Rig(bool unavailable = false, MonitorLimits? limits = null)
+        public Rig(bool unavailable = false, MonitorLimits? limits = null, ISystemInventory? inventory = null)
         {
             Unavailable = unavailable;
             Handler = new MonitorHandler(
@@ -43,7 +43,8 @@ public class MonitorHandlerTests
                 new MonitorFootprintStore(Dir.Path, () => DateTimeOffset.Now),
                 new AllExist(), () => DateTimeOffset.Now,
                 limits ?? new MonitorLimits(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5),
-                    TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5)));
+                    TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5)),
+                inventory);
         }
 
         public Task Send(AgentResponse r)
@@ -322,5 +323,58 @@ public class MonitorHandlerTests
     {
         using var rig = new Rig();
         Assert.Null(await rig.Handler.StopAsync("nope"));
+    }
+
+    // 假名册：每次 Snapshot 依次返回预设的一组；Throw 时抛出
+    private sealed class FakeInventory(params InventoryItem[][] snapshots) : ISystemInventory
+    {
+        private int _i;
+        public bool Throw;
+        public IReadOnlyCollection<InventoryItem> Snapshot()
+        {
+            if (Throw) throw new IOException("读不到");
+            return snapshots[Math.Min(_i++, snapshots.Length - 1)];
+        }
+    }
+
+    private async Task<MonitorFootprint> RunToRootExit(Rig rig)
+    {
+        var run = rig.Handler.StartAsync(@"C:\setup.exe", rig.Send, CancellationToken.None, "s1");
+        await rig.WaitStarted();
+        await rig.WaitReady();
+        rig.Handler.SetRoot("s1", Root);
+        rig.Source!.Push(new ProcessStopEvent(Root, DateTimeOffset.Now));
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        return Assert.Single(rig.Store.ReadAll());
+    }
+
+    [Fact]
+    public async Task Services_and_tasks_that_appear_during_monitoring_are_possible_entries()
+    {
+        var svc = new InventoryItem(FootprintEntryType.Service, "Spooler");
+        var task = new InventoryItem(FootprintEntryType.ScheduledTask, @"\FooUpdater");
+        var inv = new FakeInventory([svc], [svc, task]);   // 开始时只有 Spooler，结束时多了一个任务
+        using var rig = new Rig(limits: new MonitorLimits(
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5), TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5)), inventory: inv);
+
+        var fp = await RunToRootExit(rig);
+
+        var e = Assert.Single(fp.Entries);
+        Assert.Equal(@"\FooUpdater", e.Path);
+        Assert.Equal(FootprintConfidence.Possible, e.Confidence);
+        Assert.True(fp.Completeness.IsComplete);
+    }
+
+    [Fact]
+    public async Task Inventory_failure_marks_footprint_incomplete()
+    {
+        var inv = new FakeInventory([]) { Throw = true };
+        using var rig = new Rig(limits: new MonitorLimits(
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5), TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5)), inventory: inv);
+
+        var fp = await RunToRootExit(rig);
+
+        Assert.False(fp.Completeness.IsComplete);
+        Assert.Contains(fp.Completeness.Reasons, r => r.Contains("计划任务"));
     }
 }

@@ -10,15 +10,15 @@ namespace UpdateHelper.Core.Tests.Agent;
 /// </summary>
 public class EtwMonitorSessionTests
 {
-    // 私有内核会话必须用应用专属名，绝不能用 NT Kernel Logger——否则又会跟反作弊/游戏守护抢同一个传统会话。
+    // 监控会话必须用应用专属名，绝不能用 NT Kernel Logger——否则又会跟反作弊/游戏守护抢同一个传统会话。
     [Fact]
     public void Session_name_is_app_specific_and_not_nt_kernel_logger()
     {
-        Assert.Equal("UpdateHelperMonitorKernel", EtwMonitorSession.MonitorSessionName);
+        Assert.Equal("UpdateHelperMonitor", EtwMonitorSession.MonitorSessionName);
         Assert.NotEqual(EtwMonitorSession.MonitorSessionName, KernelTraceEventParser.KernelSessionName);
     }
 
-    // 失败文案要贴合私有会话（槽位满/不支持/无权限），且不再叫用户去关 Process Monitor。
+    // 失败文案要说清原因，且不叫用户去关 Process Monitor（本会话与 NT Kernel Logger 无关）。
     [Fact]
     public void Unavailable_message_describes_private_session_failure_without_procmon()
     {
