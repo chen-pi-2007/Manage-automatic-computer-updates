@@ -20,7 +20,9 @@
     </ItemGroup>
   </Target>
 
-  <!-- Native AOT（启动器，不引用 Windows SDK 投影包）：运行时与 AOT 编译器都跟着这个版本走 -->
+  <!-- Native AOT（启动器，不引用 Windows SDK 投影包）：运行时与 AOT 编译器都跟着这个版本走。
+       普通 dotnet build 也要设：PublishAot 的项目在还原时就会拉 AOT 编译器包，不设就拉回有漏洞的旧版本、被安全审计拦下。
+       副作用是普通编译出的启动器要求本机运行时 ≥ 这个版本——没关系，那个产物没人运行（App 打包走发布，产出原生程序；测试只引用源码） -->
   <PropertyGroup Condition="'$(PublishAot)' == 'true'">
     <RuntimeFrameworkVersion>$(UhPatchedRuntimeVersion)</RuntimeFrameworkVersion>
   </PropertyGroup>

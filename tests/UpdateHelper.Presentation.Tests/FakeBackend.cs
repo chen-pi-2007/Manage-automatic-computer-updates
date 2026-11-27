@@ -44,9 +44,12 @@ public sealed class FakeBackend : IAppBackend
     public Func<string, IProgress<DiscoveryItem>?, Task<MonitorFootprint>> OnStartMonitoredInstall { get; set; } =
         (_, _) => throw new NotSupportedException("监控安装只在真实后端里有；界面测试不走这条。");
     public string? LastMonitoredInstaller { get; private set; }
-    public Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct)
+    public CancellationToken LastStopToken { get; private set; }
+    public Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct,
+        CancellationToken stopToken = default)
     {
         LastMonitoredInstaller = installerPath;
+        LastStopToken = stopToken;
         return OnStartMonitoredInstall(installerPath, progress);
     }
     public IReadOnlyList<MonitorFootprint> ReadFootprints() => Footprints;

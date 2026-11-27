@@ -31,13 +31,17 @@ public sealed partial class MonitorInstallViewModel : ObservableObject
     }
 
     public string Note =>
-        "选一个安装程序（.exe 或 .msi），会像双击一样运行它，同时记录它新增和改动了哪些文件、注册表和计划任务。" +
-        "安装程序退出后自动结束并列出结果。只记录，不删除任何东西；标「可能」的项需要你自己判断是否属于这个软件。";
+        "选一个安装程序（.exe 或 .msi），会像双击一样运行它，同时记录它新建了哪些文件、注册表和计划任务，以及改动了哪些注册表值" +
+        "（覆盖已有的文件不记录）。安装程序退出后自动结束并列出结果；安装完自动打开了软件或浏览器、迟迟不结束时，可以点「结束监控」。" +
+        "只记录，不删除任何东西；标「可能」的项需要你自己判断是否属于这个软件。";
 
     /// <summary>进行中的进度、失败原因等一行提示。</summary>
     [ObservableProperty] private string? _message;
 
-    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(StartCommand))] private bool _isRunning;
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand))] private bool _isRunning;
+
+    // 本次监控的"结束"信号；只在运行中非空
+    private CancellationTokenSource? _stop;
 
     /// <summary>结果标题，如"setup.exe · 2026-11-16 16:28"；没有结果时为 null。</summary>
     [ObservableProperty] private string? _resultTitle;
@@ -55,20 +59,33 @@ public sealed partial class MonitorInstallViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanStart))]
     private async Task StartAsync()
     {
-        var path = _pickInstaller();
+        string? path;
+        try
+        {
+            path = _pickInstaller();
+        }
+        catch (Exception ex)
+        {
+            Message = $"没能打开文件选择框：{ex.Message}";
+            return;
+        }
         if (string.IsNullOrWhiteSpace(path)) return;   // 取消了选择
 
+        var stop = new CancellationTokenSource();
+        _stop = stop;
         IsRunning = true;
         Message = $"正在监控 {Path.GetFileName(path)} 的安装……装完（安装程序退出）后会自动结束。";
         var found = 0;
         var progress = new Progress<DiscoveryItem>(_ =>
         {
             var n = Interlocked.Increment(ref found);
-            Message = $"正在监控 {Path.GetFileName(path)} 的安装：已发现 {n} 项改动……";
+            // 进度回调是异步投递的，可能在结束之后才到：那时别再把"正在监控"写回去
+            if (ReferenceEquals(_stop, stop) && !stop.IsCancellationRequested)
+                Message = $"正在监控 {Path.GetFileName(path)} 的安装：已发现 {n} 项改动……";
         });
         try
         {
-            var footprint = await _backend.StartMonitoredInstallAsync(path, progress, CancellationToken.None);
+            var footprint = await _backend.StartMonitoredInstallAsync(path, progress, CancellationToken.None, stop.Token);
             Show(footprint);
             Message = null;
         }
@@ -78,8 +95,21 @@ public sealed partial class MonitorInstallViewModel : ObservableObject
         }
         finally
         {
+            _stop = null;
+            stop.Dispose();
             IsRunning = false;
         }
+    }
+
+    private bool CanStop() => IsRunning;
+
+    /// <summary>现在就结束监控：助手立即收尾并给出足迹（会标为"提前结束"，之后的改动不在记录内）。</summary>
+    [RelayCommand(CanExecute = nameof(CanStop))]
+    private void Stop()
+    {
+        if (_stop is not { IsCancellationRequested: false } stop) return;
+        Message = "正在结束监控，整理结果……";
+        stop.Cancel();
     }
 
     /// <summary>显示最近一次保存的足迹（打开设置页时调用）；读不到就保持空。</summary>

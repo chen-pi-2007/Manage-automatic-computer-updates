@@ -303,7 +303,7 @@ public sealed class MonitorHandler(
         var inventoryFailed = s.InventoryFailed;
         if (inventory is not null && s.InventoryBefore is { } before)
         {
-            try { added = inventory.Snapshot().Where(i => !before.Contains((i.Type, i.Name.ToUpperInvariant()))).ToList(); }
+            try { added = inventory.Snapshot().Where(i => !before.Contains(Identity(i))).ToList(); }
             catch (Exception) { inventoryFailed = true; }
         }
 
@@ -337,9 +337,13 @@ public sealed class MonitorHandler(
         return footprint;
     }
 
-    // 名册项的身份：类型 + 名字（不分大小写）
+    // 名册项的身份：类别 + 名字（不分大小写）。服务和驱动共用服务控制管理器的同一个命名空间，
+    // 只按名字比——否则已有服务的类型在两次快照间变了（被重新配置、或某次读不到类型），会被误当成新增的驱动
+    private static (FootprintEntryType, string) Identity(InventoryItem i) =>
+        (i.Type == FootprintEntryType.Driver ? FootprintEntryType.Service : i.Type, i.Name.ToUpperInvariant());
+
     private static HashSet<(FootprintEntryType, string)> ToSet(IEnumerable<InventoryItem> items) =>
-        items.Select(i => (i.Type, i.Name.ToUpperInvariant())).ToHashSet();
+        items.Select(Identity).ToHashSet();
 
     private void ReleaseWithoutSaving(Session s)
     {

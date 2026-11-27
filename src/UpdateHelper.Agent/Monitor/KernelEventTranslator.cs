@@ -13,9 +13,11 @@ public sealed class KernelEventTranslator(
     Func<int, string> imagePathOf)
 {
     // 文件对象 → 打开时的路径。只为给“改名”找旧名：改名事件只带新路径和文件对象，旧名得从它之前的打开事件里查。
-    // 改名紧跟在打开之后，所以不用长期保存；写满就清空，最坏情况是某次改名查不到旧名（那条只算“动过”、不算新建，偏保守）。
-    private const int MaxFileObjects = 100_000;
-    private readonly Dictionary<ulong, string> _openFiles = new();
+    // 两代轮换（当前代写满就丢掉上一代），不整表清空：避免清表恰好落在“打开”和“改名”之间而查不到旧名。
+    // 真查不到时 OldPath 为 null，Core 会把足迹标不完整。
+    private const int FileGenerationSize = 100_000;
+    private Dictionary<ulong, string> _openFiles = new();
+    private Dictionary<ulong, string> _openFilesPrev = new();
     private readonly RegistryObjectTable _keys = new();
 
     // FILE_DIRECTORY_FILE：这是在建目录。目录本身不记账，靠里面的文件体现
@@ -26,9 +28,17 @@ public sealed class KernelEventTranslator(
     public void FileOpened(ulong fileObject, string? ntPath)
     {
         if (fileObject == 0 || string.IsNullOrEmpty(ntPath)) return;
-        if (_openFiles.Count >= MaxFileObjects) _openFiles.Clear();
+        if (_openFiles.Count >= FileGenerationSize && !_openFiles.ContainsKey(fileObject))
+        {
+            _openFilesPrev = _openFiles;
+            _openFiles = new Dictionary<ulong, string>();
+        }
         _openFiles[fileObject] = ntPath;
+        _openFilesPrev.Remove(fileObject);
     }
+
+    private string? OpenedPath(ulong fileObject) =>
+        _openFiles.TryGetValue(fileObject, out var p) || _openFilesPrev.TryGetValue(fileObject, out p) ? p : null;
 
     /// <summary>内核只在磁盘上真的新建了文件时才发这个事件；打开已有文件不会走到这里。</summary>
     public MonitorEvent? FileCreatedNew(int pid, string? ntPath, uint createOptions, DateTimeOffset time)
@@ -49,9 +59,9 @@ public sealed class KernelEventTranslator(
     {
         if (string.IsNullOrEmpty(newNtPath)) return null;
         string? oldPath = null;
-        if (fileObject != 0 && _openFiles.TryGetValue(fileObject, out var oldNt))
+        if (fileObject != 0 && OpenedPath(fileObject) is { } oldNt)
             oldPath = resolveFilePath(oldNt).Path;
-        if (fileObject != 0) _openFiles[fileObject] = newNtPath;   // 同一个句柄可能接着再改名
+        if (fileObject != 0) FileOpened(fileObject, newNtPath);   // 同一个句柄可能接着再改名
         var (path, serial) = resolveFilePath(newNtPath);
         return new FileRenameEvent(pid, oldPath, path, time, serial);
     }
@@ -68,21 +78,27 @@ public sealed class KernelEventTranslator(
         return new RegistryEvent(pid, ToHivePath(full), null, MonitorEventKind.RegistryCreate, time);
     }
 
-    /// <summary>写值。previousType 和 previousSize 都是 0 表示这个值之前不存在（新值）；否则是改写已有的值。</summary>
+    /// <summary>
+    /// 写值。旧值类型和大小都是 0 表示这个值之前不存在（新值）；否则是改写已有的值。
+    /// 例外：新写的也是空的 REG_NONE（类型 0、大小 0）时，“原本不存在”和“原本就是个空 REG_NONE”分不清，标为不确定。
+    /// 值名 null 或空串都是键的默认值，统一传空串——它是值，不是键。
+    /// </summary>
     public MonitorEvent? ValueSet(int pid, ulong keyObject, int status, string? valueName,
-        int previousType, int previousSize, DateTimeOffset time)
+        int newType, int newSize, int previousType, int previousSize, DateTimeOffset time)
     {
         if (status != 0) return null;
+        var key = _keys.Resolve(keyObject);
         // 后台活动调节器在每个进程退出时，用内核自己打开的键记一笔“最后运行时间”，值名是程序的设备路径。
-        // 那个键不是进程打开的，查不到路径；它也不是软件的改动。认出来直接丢，免得每次都被当成“没解析出的注册表改动”。
-        if (valueName is not null && valueName.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase)) return null;
-        return new RegistryEvent(pid, ToHivePath(_keys.Resolve(keyObject)), NullIfEmpty(valueName),
-            MonitorEventKind.RegistrySet, time, IsNew: previousType == 0 && previousSize == 0);
+        // 那个键不是进程打开的、查不到路径，也不是软件的改动：键解析不出且值名是设备路径时才丢，免得被当成“没解析出的注册表改动”
+        if (key is null && valueName is not null && valueName.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase)) return null;
+        var isNew = previousType == 0 && previousSize == 0;
+        return new RegistryEvent(pid, ToHivePath(key), valueName ?? "", MonitorEventKind.RegistrySet, time,
+            IsNew: isNew, IsNewUncertain: isNew && newType == 0 && newSize == 0);
     }
 
     public MonitorEvent? ValueDeleted(int pid, ulong keyObject, int status, string? valueName, DateTimeOffset time) =>
         status != 0 ? null
-            : new RegistryEvent(pid, ToHivePath(_keys.Resolve(keyObject)), NullIfEmpty(valueName), MonitorEventKind.RegistryDelete, time);
+            : new RegistryEvent(pid, ToHivePath(_keys.Resolve(keyObject)), valueName ?? "", MonitorEventKind.RegistryDelete, time);
 
     public MonitorEvent? KeyDeleted(int pid, ulong keyObject, int status, DateTimeOffset time) =>
         status != 0 ? null
@@ -92,8 +108,6 @@ public sealed class KernelEventTranslator(
         new ProcessStartEvent(pid, parentPid, imagePathOf(pid), time);
 
     public MonitorEvent ProcessStopped(int pid, DateTimeOffset time) => new ProcessStopEvent(pid, time);
-
-    private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
 
     private string ToHivePath(string? kernelPath) => RegPath(kernelPath, currentUserSid);
 

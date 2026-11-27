@@ -42,8 +42,14 @@ public sealed record FileRenameEvent(int Pid, string? OldPath, string NewPath, D
 /// RegistryCreate 只表示【真的新建了键】（打开已有键不发）；RegistrySet 的 IsNew 表示该值之前不存在。
 /// KeyPath 为空表示采集侧没能确定这次改动落在哪个键上（Core 据此标不完整，不瞎猜）。
 /// </summary>
+/// <remarks>
+/// ValueName 为 null 表示这是针对【键】的事件；空串 "" 表示键的【默认值】（它是一个值，不是键——
+/// 写默认值绝不能被当成“新建了这个键”，否则删除时会连同用户原有的子键一起删掉）。
+/// IsNewUncertain：写值前的旧值类型和大小都是 0，而新写的也是空的 REG_NONE——“原本不存在”与
+/// “原本就是个空的 REG_NONE 值”无法区分（文件关联的 OpenWithProgids 全是这种），只有所在的键是本次新建的才算新值。
+/// </remarks>
 public sealed record RegistryEvent(int Pid, string KeyPath, string? ValueName, MonitorEventKind Kind, DateTimeOffset Time,
-    bool IsNew = false)
+    bool IsNew = false, bool IsNewUncertain = false)
     : MonitorEvent(Pid, Time);
 
 /// <summary>服务安装或驱动加载。</summary>

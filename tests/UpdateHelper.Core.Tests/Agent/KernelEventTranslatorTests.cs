@@ -53,7 +53,7 @@ public class KernelEventTranslatorTests
         Assert.Null(t.KeyOpenedOrCreated(5, 0, 0x10, 0, 0, null, @"\REGISTRY\USER\" + Sid, T));
         Assert.Null(t.KeyOpenedOrCreated(5, 0x10, 0x20, 0, 2, "", @"Software\Pre", T));
 
-        var set = Assert.IsType<RegistryEvent>(t.ValueSet(5, 0x20, 0, "Touched", 4, 4, T));
+        var set = Assert.IsType<RegistryEvent>(t.ValueSet(5, 0x20, 0, "Touched", 4, 4, 4, 4, T));
         Assert.Equal(@"HKCU\Software\Pre", set.KeyPath);
         Assert.Equal("Touched", set.ValueName);
         Assert.False(set.IsNew);   // 有旧值（类型/大小非 0）→ 改写，不是新值
@@ -68,7 +68,7 @@ public class KernelEventTranslatorTests
         Assert.Equal(MonitorEventKind.RegistryCreate, created.Kind);
         Assert.Equal(@"HKLM\SOFTWARE\Vendor", created.KeyPath);
 
-        var set = Assert.IsType<RegistryEvent>(t.ValueSet(5, 0x30, 0, "Installed", 0, 0, T));
+        var set = Assert.IsType<RegistryEvent>(t.ValueSet(5, 0x30, 0, "Installed", 4, 4, 0, 0, T));
         Assert.True(set.IsNew);
     }
 
@@ -84,13 +84,57 @@ public class KernelEventTranslatorTests
     {
         var t = New();
         Assert.Null(t.KeyOpenedOrCreated(5, 0, 0x10, unchecked((int)0xC0000034), 1, null, @"\REGISTRY\MACHINE\X", T));
-        Assert.Null(t.ValueSet(5, 0x10, unchecked((int)0xC0000022), "v", 0, 0, T));
+        Assert.Null(t.ValueSet(5, 0x10, unchecked((int)0xC0000022), "v", 4, 4, 0, 0, T));
     }
 
     [Fact]
     public void Background_activity_moderator_value_is_ignored()
     {
-        Assert.Null(New().ValueSet(5, 0x77, 0, @"\Device\HarddiskVolume1\x\a.exe", 0, 0, T));
+        Assert.Null(New().ValueSet(5, 0x77, 0, @"\Device\HarddiskVolume1\x\a.exe", 3, 24, 0, 0, T));
+    }
+
+    [Fact]
+    public void Device_path_value_name_is_kept_when_its_key_is_known()
+    {
+        var t = New();
+        t.KeyOpenedOrCreated(5, 0, 0x10, 0, 0, null, @"\REGISTRY\MACHINE\SOFTWARE\Vendor", T);
+        var set = Assert.IsType<RegistryEvent>(t.ValueSet(5, 0x10, 0, @"\Device\X", 1, 8, 0, 0, T));
+        Assert.Equal(@"HKLM\SOFTWARE\Vendor", set.KeyPath);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void Default_value_is_a_value_with_empty_name_never_a_key(string? eventValueName)
+    {
+        var t = New();
+        t.KeyOpenedOrCreated(5, 0, 0x10, 0, 0, null, @"\REGISTRY\MACHINE\SOFTWARE\Existing", T);
+        var set = Assert.IsType<RegistryEvent>(t.ValueSet(5, 0x10, 0, eventValueName, 1, 8, 0, 0, T));
+        Assert.Equal("", set.ValueName);   // 空串 = 默认值；null 才表示"针对键"
+        var del = Assert.IsType<RegistryEvent>(t.ValueDeleted(5, 0x10, 0, eventValueName, T));
+        Assert.Equal("", del.ValueName);
+    }
+
+    [Fact]
+    public void Empty_reg_none_value_is_marked_uncertain()
+    {
+        var t = New();
+        t.KeyOpenedOrCreated(5, 0, 0x10, 0, 0, null, @"\REGISTRY\MACHINE\SOFTWARE\Classes\.txt\OpenWithProgids", T);
+        var set = Assert.IsType<RegistryEvent>(t.ValueSet(5, 0x10, 0, "Foo.txt", 0, 0, 0, 0, T));
+        Assert.True(set.IsNew);
+        Assert.True(set.IsNewUncertain);   // "原本不存在"与"原本就是空 REG_NONE"分不清
+        var normal = Assert.IsType<RegistryEvent>(t.ValueSet(5, 0x10, 0, "Bar", 1, 8, 0, 0, T));
+        Assert.False(normal.IsNewUncertain);
+    }
+
+    [Fact]
+    public void Rename_still_finds_old_name_after_table_rotation()
+    {
+        var t = New();
+        t.FileOpened(0xAA, @"\Device\HarddiskVolume1\a\final.dat.tmp");
+        for (ulong i = 1; i <= 100_000; i++) t.FileOpened(0x1000_0000 + i, @"\Device\HarddiskVolume1\noise");   // 写满一代，触发轮换
+        var r = Assert.IsType<FileRenameEvent>(t.FileRenamed(5, 0xAA, @"\Device\HarddiskVolume1\a\final.dat", T));
+        Assert.Equal(@"C:\a\final.dat.tmp", r.OldPath);
     }
 
     [Fact]

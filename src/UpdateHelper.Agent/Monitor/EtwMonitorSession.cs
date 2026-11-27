@@ -153,7 +153,7 @@ public sealed class EtwMonitorSession : IMonitorSource
                     return _translator.KeyDeleted(pid, U64(e, "KeyObject"), I32(e, "Status"), time);
                 case 5:    // SetValueKey
                     return _translator.ValueSet(pid, U64(e, "KeyObject"), I32(e, "Status"), Str(e, "ValueName"),
-                        I32(e, "PreviousDataType"), I32(e, "PreviousDataSize"), time);
+                        I32(e, "Type"), I32(e, "DataSize"), I32(e, "PreviousDataType"), I32(e, "PreviousDataSize"), time);
                 case 6:    // DeleteValueKey
                     return _translator.ValueDeleted(pid, U64(e, "KeyObject"), I32(e, "Status"), Str(e, "ValueName"), time);
             }

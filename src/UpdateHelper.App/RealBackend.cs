@@ -77,7 +77,8 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
     /// 失败（模块没启用 / 助手拉不起来 / 被冒充 / 安装器启动失败）抛异常，消息是中文；ct 取消 = 放弃这条连接，
     /// 助手侧会话继续记录，之后可凭会话 id 读回。
     /// </summary>
-    public async Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct)
+    public async Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct,
+        CancellationToken stopToken = default)
     {
         // 先校验安装包路径（存在的本地 .exe/.msi），不合格就不启动任何东西
         if (MonitorInstallerPath.Validate(installerPath) is { } pathError)
@@ -125,7 +126,7 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
             // 防冒充：CreateMonitorClient 要求管道另一头是 Program Files 里的后台助手（同卸载路径用的检查）
             try
             {
-                return await _agent.CreateMonitorClient().RunAsync(request, d => progress?.Report(d), ct, OnReadyLaunch);
+                return await _agent.CreateMonitorClient().RunAsync(request, d => progress?.Report(d), ct, OnReadyLaunch, stopToken);
             }
             catch (AgentUnavailableException ex) when (ex.Kind != AgentFailureKind.Broken)
             {

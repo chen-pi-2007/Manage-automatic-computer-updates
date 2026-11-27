@@ -55,8 +55,12 @@ public interface IAppBackend
     /// <summary>监控模式的计划任务现在是否存在。查询本身失败（超时等）时抛异常——调用方应视为"不确定"而不是"不存在"。</summary>
     bool MonitorTaskExists();
 
-    /// <summary>监控一次安装：在用户上下文启动所选安装器，经监控通道流式返回发现项，最后给出足迹。失败抛带中文消息的异常。</summary>
-    Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct);
+    /// <summary>
+    /// 监控一次安装：在用户上下文启动所选安装器，经监控通道流式返回发现项，最后给出足迹。失败抛带中文消息的异常。
+    /// stopToken 触发 = 用户要求"现在就结束监控"：助手立即收尾，照常返回（标为提前结束的）足迹。
+    /// </summary>
+    Task<MonitorFootprint> StartMonitoredInstallAsync(string installerPath, IProgress<DiscoveryItem>? progress, CancellationToken ct,
+        CancellationToken stopToken = default);
 
     /// <summary>读取已保存的软件足迹（新的在前）。</summary>
     IReadOnlyList<MonitorFootprint> ReadFootprints();

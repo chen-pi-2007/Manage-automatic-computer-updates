@@ -125,8 +125,11 @@
                             <TextBlock Text="{Binding Note}" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
                             <TextBlock Text="需要先打开上面的「监控模块」。" FontSize="12" Opacity="0.7" />
                         </StackPanel>
-                        <ui:Button Grid.Column="1" Content="选择安装程序并监控…" Appearance="Primary"
-                                   Command="{Binding StartCommand}" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <ui:Button Content="选择安装程序并监控…" Appearance="Primary" Command="{Binding StartCommand}" />
+                            <ui:Button Content="结束监控" Margin="8,0,0,0" Command="{Binding StopCommand}"
+                                       Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                        </StackPanel>
                     </Grid>
                     <ui:ProgressRing IsIndeterminate="True" Width="20" Height="20" HorizontalAlignment="Left" Margin="0,8,0,0"
                                      Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />

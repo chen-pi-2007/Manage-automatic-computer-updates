@@ -8,8 +8,9 @@ namespace UpdateHelper.Core.Monitor;
 /// </summary>
 public sealed class FootprintAccumulator
 {
-    // 一次动作：谁在何时做的。IsCreate = 真的新建；IsDelete = 删除；两者都为 false = 只是动过（改名落到这里、改写已有值）
-    private sealed record Act(int Pid, DateTimeOffset Time, bool IsCreate, bool IsDelete);
+    // 一次动作：谁在何时做的。IsCreate = 真的新建；IsDelete = 删除；两者都为 false = 只是动过（改名落到这里、改写已有值）。
+    // Uncertain：IsCreate 是“可能新建”（空 REG_NONE 值，见 RegistryEvent），收尾时要所在的键是本次新建的才认
+    private sealed record Act(int Pid, DateTimeOffset Time, bool IsCreate, bool IsDelete, bool Uncertain = false);
 
     // 一本账：同一对象（路径/键/值/服务名）的所有动作
     private sealed class Ledger
@@ -30,6 +31,9 @@ public sealed class FootprintAccumulator
     private readonly Dictionary<string, Ledger> _ledgers = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<int, string> _imageByPid = new(); // PID → 最近一次映像路径，用于填 Exe
     private readonly List<(int Pid, DateTimeOffset Time)> _unresolvedRegistry = new(); // 没能确定键路径的注册表改动
+    private readonly List<(int Pid, DateTimeOffset Time)> _unresolvedRenames = new();  // 查不到原文件名的改名
+    // 文件账的路径有序索引：目录改名时按前缀区间找下级文件，不用每次扫全部账本（账本里有全系统所有进程的记录）
+    private readonly SortedSet<string> _filePaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(InventoryItem Item, DateTimeOffset At)> _inventoryAdditions = new();
     private bool _inventoryUnavailable;
     private int _eventsLost;
@@ -75,12 +79,13 @@ public sealed class FootprintAccumulator
                             _unresolvedRegistry.Add((re.Pid, re.Time));
                             break;
                         }
-                        // 带值名的是“值”，否则是“键”；值的路径 = 键路径\值名
-                        var isValue = !string.IsNullOrEmpty(re.ValueName);
+                        // ValueName 非 null 就是“值”（空串是默认值，也是值，路径以 \ 结尾）；null 才是“键”。
+                        // 值的路径 = 键路径\值名
+                        var isValue = re.ValueName is not null;
                         var path = isValue ? re.KeyPath + "\\" + re.ValueName : re.KeyPath;
                         Add(isValue ? FootprintEntryType.RegistryValue : FootprintEntryType.RegistryKey, path, null,
                             new Act(re.Pid, re.Time, re.Kind == MonitorEventKind.RegistryCreate || re.IsNew,
-                                re.Kind == MonitorEventKind.RegistryDelete));
+                                re.Kind == MonitorEventKind.RegistryDelete, re.IsNewUncertain));
                         break;
                     }
                 case ServiceOrDriverEvent se:
@@ -124,9 +129,19 @@ public sealed class FootprintAccumulator
     {
         var key = Key(type, path);
         if (!_ledgers.TryGetValue(key, out var l))
+        {
             _ledgers[key] = l = new Ledger { Type = type, Path = path };
+            if (type == FootprintEntryType.File) _filePaths.Add(path);
+        }
         l.VolumeSerial ??= volumeSerial;
         l.Acts.Add(act);
+    }
+
+    private bool RemoveFileLedger(string path, out Ledger ledger)
+    {
+        if (!_ledgers.Remove(Key(FootprintEntryType.File, path), out ledger!)) return false;
+        _filePaths.Remove(path);
+        return true;
     }
 
     /// <summary>
@@ -137,21 +152,26 @@ public sealed class FootprintAccumulator
     /// </summary>
     private void Rename(FileRenameEvent fr)
     {
-        if (!string.IsNullOrEmpty(fr.OldPath) && !string.Equals(fr.OldPath, fr.NewPath, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(fr.OldPath))
         {
-            if (_ledgers.Remove(Key(FootprintEntryType.File, fr.OldPath), out var self))
-                MoveLedger(self, fr.NewPath);
-
-            var oldPrefix = fr.OldPath.TrimEnd('\\') + "\\";
-            var newPrefix = fr.NewPath.TrimEnd('\\') + "\\";
-            var children = _ledgers
-                .Where(kv => kv.Value.Type == FootprintEntryType.File
-                             && kv.Value.Path.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            foreach (var (key, child) in children)
+            // 查不到原名：若原名是本次新建的临时文件，新建身份就丢了。不编，记下来，属于树内就标不完整
+            _unresolvedRenames.Add((fr.Pid, fr.Time));
+        }
+        else if (!string.Equals(fr.OldPath, fr.NewPath, StringComparison.OrdinalIgnoreCase))
+        {
+            if (RemoveFileLedger(fr.OldPath, out var self))
             {
-                _ledgers.Remove(key);
-                MoveLedger(child, newPrefix + child.Path[oldPrefix.Length..]);
+                MoveLedger(self, fr.NewPath);   // 旧名本身有账 → 它是文件（目录不记账），没有下级可搬
+            }
+            else
+            {
+                // 可能是目录改名：按前缀区间找已记账的下级文件，一起搬
+                var oldPrefix = fr.OldPath.TrimEnd('\\') + "\\";
+                var newPrefix = fr.NewPath.TrimEnd('\\') + "\\";
+                var children = _filePaths.GetViewBetween(oldPrefix, oldPrefix + '￿').ToList();
+                foreach (var childPath in children)
+                    if (RemoveFileLedger(childPath, out var child))
+                        MoveLedger(child, newPrefix + childPath[oldPrefix.Length..]);
             }
         }
         Add(FootprintEntryType.File, fr.NewPath, fr.VolumeSerial, new Act(fr.Pid, fr.Time, false, false));
@@ -170,6 +190,7 @@ public sealed class FootprintAccumulator
         {
             source.Path = newPath;
             _ledgers[key] = source;
+            if (source.Type == FootprintEntryType.File) _filePaths.Add(newPath);
         }
     }
 
@@ -225,14 +246,21 @@ public sealed class FootprintAccumulator
                 if (l.Acts[^1].IsDelete) continue;
 
                 // 这条是否本次新建：以认定归属的那次动作为准
+                var isNew = owner.IsCreate;
+                // 空 REG_NONE 值：只有所在的键是本次（树内/代办）新建的，才能确定这个值是新的
+                if (isNew && owner.Uncertain && !KeyCreatedInSession(l.Path)) isNew = false;
+
                 var entry = new FootprintEntry(
                     l.Type, l.Path, l.Type is FootprintEntryType.File or FootprintEntryType.Directory ? l.VolumeSerial : null,
                     confidence, owner.Pid,
                     _imageByPid.TryGetValue(owner.Pid, out var exe) ? exe : null,
-                    owner.Time, owner.IsCreate);
+                    owner.Time, isNew);
 
                 // ④ 复验：收尾时磁盘/注册表里已不存在的是幽灵记录
                 if (!probe.StillExists(entry)) continue;
+
+                // ⑤ “新建”的文件其实早就有了（改名覆盖了用户原有的文件，隧道机制让它继承了原创建时间）→ 只算改动
+                if (entry.IsNew && probe.ExistedBefore(entry, _start)) entry = entry with { IsNew = false };
 
                 if (ambiguous) hasAmbiguous = true;
                 entries.Add(entry);
@@ -249,10 +277,21 @@ public sealed class FootprintAccumulator
             entries.Sort((a, b) => a.FirstSeen.CompareTo(b.FirstSeen));
 
             var unresolved = _unresolvedRegistry.Count(u => _tree.Attribute(u.Pid, u.Time) != AttributionLevel.Outside);
+            var unresolvedRenames = _unresolvedRenames.Count(u => _tree.Attribute(u.Pid, u.Time) != AttributionLevel.Outside);
 
             return new MonitorFootprint(id, _start, end, _rootPid, _rootExe,
-                FindSoftwareKey(entries), BuildCompleteness(hasAmbiguous, unresolved), entries);
+                FindSoftwareKey(entries), BuildCompleteness(hasAmbiguous, unresolved, unresolvedRenames), entries,
+                MonitorFootprint.CurrentEngineVersion);
         }
+    }
+
+    /// <summary>值路径（键路径\值名）所在的键，是否在本次监控里由树内/代办进程新建。</summary>
+    private bool KeyCreatedInSession(string valuePath)
+    {
+        var slash = valuePath.LastIndexOf('\\');
+        if (slash <= 0) return false;
+        if (!_ledgers.TryGetValue(Key(FootprintEntryType.RegistryKey, valuePath[..slash]), out var key)) return false;
+        return key.Acts.Any(a => a.IsCreate && _tree.Attribute(a.Pid, a.Time) != AttributionLevel.Outside);
     }
 
     // 树内新建的 ...\Uninstall\<子键>：取到子键为止，作为本软件的卸载登记键
@@ -272,12 +311,13 @@ public sealed class FootprintAccumulator
         return null;
     }
 
-    private FootprintCompleteness BuildCompleteness(bool hasAmbiguous, int unresolvedRegistry)
+    private FootprintCompleteness BuildCompleteness(bool hasAmbiguous, int unresolvedRegistry, int unresolvedRenames)
     {
         var reasons = new List<string>();
         if (_eventsLost > 0) reasons.Add($"监控丢事件 {_eventsLost} 个，部分改动可能没有被记录");
         if (_earlyStop is not null) reasons.Add($"监控提前结束：{_earlyStop}，之后的改动不在记录内");
         if (unresolvedRegistry > 0) reasons.Add($"有 {unresolvedRegistry} 处注册表改动没能确定所在的键，没有被记录");
+        if (unresolvedRenames > 0) reasons.Add($"有 {unresolvedRenames} 次改名没能查到原来的文件名，改名后的文件可能被记成了“改动”而不是“新增”");
         if (_inventoryUnavailable) reasons.Add("没能对比监控前后的服务 / 驱动 / 计划任务清单，这几类改动可能没有被记录");
         if (hasAmbiguous) reasons.Add("存在落点无法确定的项，需要你确认是否属于该软件");
         return new FootprintCompleteness(reasons.Count == 0, reasons);

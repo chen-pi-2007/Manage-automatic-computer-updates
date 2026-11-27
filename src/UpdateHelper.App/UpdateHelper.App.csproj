@@ -57,7 +57,7 @@
   </PropertyGroup>
 
   <Target Name="PublishAgentLauncherToOutput" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'"
-          Inputs="$(AgentLauncherProject);$(MSBuildThisFileDirectory)..\UpdateHelper.AgentLauncher\Program.cs;$(MSBuildThisFileDirectory)..\UpdateHelper.AgentLauncher\CleanEnvironment.cs"
+          Inputs="$(AgentLauncherProject);$(MSBuildThisFileDirectory)..\UpdateHelper.AgentLauncher\Program.cs;$(MSBuildThisFileDirectory)..\UpdateHelper.AgentLauncher\CleanEnvironment.cs;$(MSBuildThisFileDirectory)..\..\Directory.Build.targets;$(MSBuildThisFileDirectory)..\..\Directory.Build.props"
           Outputs="$(OutDir)UpdateHelper.AgentLauncher.exe">
     <Exec Command="set &quot;PATH=$(VsWhereDir);%25PATH%25&quot; &amp;&amp; dotnet publish &quot;$(AgentLauncherProject)&quot; -c $(Configuration) -o &quot;$(OutDir)launcher-tmp&quot; --nologo -v q" />
     <Copy SourceFiles="$(OutDir)launcher-tmp\UpdateHelper.AgentLauncher.exe" DestinationFolder="$(OutDir)" />

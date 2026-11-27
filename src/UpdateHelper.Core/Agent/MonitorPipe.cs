@@ -379,8 +379,12 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
     /// 这条连接随之放弃（服务端会话仍在记录已缓冲的早到事件，直到根 PID 超时自行收尾并标不完整）。
     /// 失败：连不上/被拒/版本不符/对方不是助手 → AgentUnavailableException；中途断线 → Broken（可凭会话 id 重连）。
     /// </summary>
+    /// <param name="stopToken">
+    /// 用户要求"现在就结束监控"：触发时在同一条连接上发 StopMonitor（监控管道一次只服务一个连接，另开连接发不进去），
+    /// 助手随即收尾并把足迹发回，本方法照常返回足迹。与 cancellationToken（放弃连接、会话继续记录）不同。
+    /// </param>
     public async Task<MonitorFootprint> RunAsync(AgentRequest start, Action<DiscoveryItem> onDiscovery,
-        CancellationToken cancellationToken, Func<Task<int>>? onReadyLaunch = null)
+        CancellationToken cancellationToken, Func<Task<int>>? onReadyLaunch = null, CancellationToken stopToken = default)
     {
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         try
@@ -408,7 +412,24 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
         try
         {
             var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
-            await writer.WriteLineAsync(AgentProtocol.Encode(start).AsMemory(), cancellationToken);
+            var writeGate = new SemaphoreSlim(1, 1);   // 补发根 PID 与"停止"可能同时要写：串行化
+            async Task WriteAsync(AgentRequest r)
+            {
+                await writeGate.WaitAsync(cancellationToken);
+                try { await writer.WriteLineAsync(AgentProtocol.Encode(r).AsMemory(), cancellationToken); }
+                finally { writeGate.Release(); }
+            }
+
+            await WriteAsync(start);
+
+            // 停止：只发一次；写失败（连接已断）不管，读循环会发现断开
+            using var stopRegistration = start.Op == AgentOp.StartMonitor
+                ? stopToken.Register(() => _ = Task.Run(async () =>
+                {
+                    try { await WriteAsync(start with { Op = AgentOp.StopMonitor }); }
+                    catch (Exception) { /* 连接已断或已取消 */ }
+                }))
+                : default;
 
             var awaitingRoot = start.Op == AgentOp.StartMonitor && onReadyLaunch is not null;
 
@@ -422,12 +443,12 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
                 {
                     case AgentMessageType.Ready:
                         // ETW 已就绪、事件已在缓冲：现在才启动安装器（这正是修复点），拿到根 PID 后补发 SetMonitorRoot
-                        if (awaitingRoot)
+                        // 已经要求停止了就不再启动安装器
+                        if (awaitingRoot && !stopToken.IsCancellationRequested)
                         {
                             awaitingRoot = false;   // 只握手一次，重复的 Ready 忽略
                             var rootPid = await onReadyLaunch!();
-                            var setRoot = start with { Op = AgentOp.SetMonitorRoot, RootPid = rootPid };
-                            await writer.WriteLineAsync(AgentProtocol.Encode(setRoot).AsMemory(), cancellationToken);
+                            await WriteAsync(start with { Op = AgentOp.SetMonitorRoot, RootPid = rootPid });
                         }
                         break;
                     case AgentMessageType.Discovery:

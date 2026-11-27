@@ -21,7 +21,9 @@ public class FootprintAccumulatorTests
     private sealed class FakeProbe : IFootprintProbe
     {
         public HashSet<string> Missing { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> Preexisting { get; } = new(StringComparer.OrdinalIgnoreCase);   // 创建时间早于监控开始的文件
         public bool StillExists(FootprintEntry e) => !Missing.Contains(e.Path);
+        public bool ExistedBefore(FootprintEntry e, DateTimeOffset since) => Preexisting.Contains(e.Path);
     }
 
     private static FootprintAccumulator NewAcc()
@@ -184,7 +186,8 @@ public class FootprintAccumulatorTests
         probe.Missing.Add(Dir + @"\staging\a.dll");
         probe.Missing.Add(Dir + @"\bin");   // 目录本身不是文件条目，复验按文件判
         var fp = acc.Finalize("id", probe, T(10));
-        var moved = Assert.Single(fp.Entries, x => x.Path == Dir + @"\bin\a.dll");
+        var moved = Assert.Single(fp.Entries);   // 只有搬过去的那个文件；旧路径和目录本身都不该出现
+        Assert.Equal(Dir + @"\bin\a.dll", moved.Path);
         Assert.True(moved.IsNew);
     }
 
@@ -235,5 +238,87 @@ public class FootprintAccumulatorTests
         var acc2 = NewAcc();
         acc2.RecordInventoryUnavailable();
         Assert.False(acc2.Finalize("id", new FakeProbe(), T(10)).Completeness.IsComplete);
+    }
+
+    // —— 独立评审查出的缺陷（0.9.1）——
+
+    [Fact]
+    public void Writing_default_value_of_existing_key_never_records_the_key_as_new()
+    {
+        var acc = NewAcc();
+        const string existing = @"HKLM\SOFTWARE\Classes\Directory\shell";
+        // 默认值：ValueName 是空串。它是“值”，绝不能让已有的键以“新建的键”进足迹（否则删除时连用户的子键一起删）
+        acc.Observe(new RegistryEvent(Root, existing, "", MonitorEventKind.RegistrySet, T(1), IsNew: true));
+        var fp = acc.Finalize("id", new FakeProbe(), T(10));
+        var e = Assert.Single(fp.Entries);
+        Assert.Equal(FootprintEntryType.RegistryValue, e.Type);
+        Assert.Equal(existing + @"\", e.Path);
+        Assert.DoesNotContain(fp.Entries, x => x.Type == FootprintEntryType.RegistryKey);
+        Assert.Null(fp.SoftwareKey);
+    }
+
+    [Fact]
+    public void Deleting_default_value_does_not_cancel_the_newly_created_key()
+    {
+        var acc = NewAcc();
+        const string key = @"HKCU\Software\Foo";
+        acc.Observe(new RegistryEvent(Root, key, null, MonitorEventKind.RegistryCreate, T(1)));
+        acc.Observe(new RegistryEvent(Root, key, "", MonitorEventKind.RegistryDelete, T(2)));   // 删的是默认值，不是键
+        var fp = acc.Finalize("id", new FakeProbe(), T(10));
+        var e = Assert.Single(fp.Entries);
+        Assert.Equal(FootprintEntryType.RegistryKey, e.Type);
+        Assert.True(e.IsNew);
+    }
+
+    [Fact]
+    public void Empty_reg_none_value_is_new_only_when_its_key_was_created_in_this_session()
+    {
+        var acc = NewAcc();
+        // 已有键下的空 REG_NONE 值：分不清原本有没有 → 不算新增
+        acc.Observe(new RegistryEvent(Root, @"HKCU\Software\Classes\.txt\OpenWithProgids", "Foo.txt",
+            MonitorEventKind.RegistrySet, T(1), IsNew: true, IsNewUncertain: true));
+        // 本次新建的键下的同类值：一定是新的
+        acc.Observe(new RegistryEvent(Root, @"HKCU\Software\Classes\.foo\OpenWithProgids", null, MonitorEventKind.RegistryCreate, T(2)));
+        acc.Observe(new RegistryEvent(Root, @"HKCU\Software\Classes\.foo\OpenWithProgids", "Foo.foo",
+            MonitorEventKind.RegistrySet, T(3), IsNew: true, IsNewUncertain: true));
+        var fp = acc.Finalize("id", new FakeProbe(), T(10));
+        Assert.False(fp.Entries.Single(x => x.Path.EndsWith("Foo.txt")).IsNew);
+        Assert.True(fp.Entries.Single(x => x.Path.EndsWith("Foo.foo")).IsNew);
+    }
+
+    [Fact]
+    public void Temp_file_renamed_over_a_preexisting_file_is_not_new()
+    {
+        var acc = NewAcc();
+        var userFile = Dir + @"\settings.json";   // 用户原有的文件，被“先写临时文件再改名覆盖”
+        acc.Observe(new FileEvent(Root, userFile + ".tmp", true, T(1)));
+        acc.Observe(new FileRenameEvent(Root, userFile + ".tmp", userFile, T(2)));
+        var probe = new FakeProbe();
+        probe.Preexisting.Add(userFile);   // 隧道机制：覆盖后的文件继承了原文件的创建时间
+        var e = Assert.Single(acc.Finalize("id", probe, T(10)).Entries);
+        Assert.Equal(userFile, e.Path);
+        Assert.False(e.IsNew);
+    }
+
+    [Fact]
+    public void Rename_without_old_name_marks_incomplete_only_when_in_tree()
+    {
+        var acc = NewAcc();
+        acc.Observe(new FileRenameEvent(9999, null, Dir + @"\other.dat", T(1)));   // 树外的不算
+        Assert.True(acc.Finalize("id", new FakeProbe(), T(10)).Completeness.IsComplete);
+
+        var acc2 = NewAcc();
+        acc2.Observe(new FileRenameEvent(Root, null, Dir + @"\final.dat", T(1)));
+        var fp = acc2.Finalize("id", new FakeProbe(), T(10));
+        Assert.False(fp.Completeness.IsComplete);
+        Assert.Contains(fp.Completeness.Reasons, r => r.Contains("改名"));
+        Assert.False(Assert.Single(fp.Entries).IsNew);   // 查不到来历：只算改动
+    }
+
+    [Fact]
+    public void Footprint_carries_current_engine_version()
+    {
+        Assert.Equal(MonitorFootprint.CurrentEngineVersion, NewAcc().Finalize("id", new FakeProbe(), T(10)).EngineVersion);
+        Assert.True(MonitorFootprint.CurrentEngineVersion >= 2);
     }
 }

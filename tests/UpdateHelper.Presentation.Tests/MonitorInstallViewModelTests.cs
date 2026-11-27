@@ -133,4 +133,49 @@ public sealed class MonitorInstallViewModelTests : IDisposable
         Assert.Single(vm.Entries);
         Assert.Contains("setup.exe", vm.ResultTitle);
     }
+
+    [Fact]
+    public async Task Stop_signals_the_backend_and_shows_the_returned_footprint()
+    {
+        var gate = new TaskCompletionSource<MonitorFootprint>();
+        _backend.OnStartMonitoredInstall = (_, _) => gate.Task;
+        var vm = NewVm(NewSettings(true));
+        Assert.False(vm.StopCommand.CanExecute(null));   // 没在跑时不能结束
+
+        var run = vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.StopCommand.CanExecute(null));
+        vm.StopCommand.Execute(null);
+        Assert.True(_backend.LastStopToken.IsCancellationRequested);   // 结束信号传到了后端
+        Assert.Contains("正在结束", vm.Message);
+
+        gate.SetResult(Footprint(false, Entry(FootprintEntryType.File, @"C:\Program Files\Foo\foo.exe")));   // 助手收尾后照常返回足迹
+        await run;
+        Assert.Single(vm.Entries);
+        Assert.False(vm.IsRunning);
+        Assert.False(vm.StopCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Picker_failure_is_reported_instead_of_crashing()
+    {
+        var vm = new MonitorInstallViewModel(_backend, NewSettings(true), () => throw new InvalidOperationException("对话框坏了"));
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Contains("对话框坏了", vm.Message);
+        Assert.False(vm.IsRunning);
+        Assert.Null(_backend.LastMonitoredInstaller);
+    }
+
+    [Fact]
+    public async Task Late_progress_after_finish_does_not_overwrite_the_result_message()
+    {
+        IProgress<DiscoveryItem>? captured = null;
+        _backend.OnStartMonitoredInstall = (_, p) => { captured = p; return Task.FromResult(Footprint(true)); };
+        var vm = NewVm(NewSettings(true));
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Null(vm.Message);
+
+        captured!.Report(new DiscoveryItem(FootprintEntryType.File, @"C:\late", FootprintConfidence.Possible));
+        await Task.Delay(100);   // Progress 在线程池上回调
+        Assert.Null(vm.Message);
+    }
 }
