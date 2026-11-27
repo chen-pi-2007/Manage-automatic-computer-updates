@@ -48,6 +48,9 @@ public sealed class MonitorHandler(
     // ETW 海量事件）绝不无界堆到 OOM。超限丢弃并计数，收尾时按“丢事件”标不完整（参考 EventsLost 风格）。
     private const int MaxBufferedBeforeRoot = 200_000;
 
+    // 用户手动结束的原因文字（按引用比较，用来认出"用户在安装器启动前就结束了"）
+    private static readonly string UserStopReason = "用户手动停止，之后的动作没有被记录";
+
     private sealed class Session
     {
         public Session(string id, string rootExe, DateTimeOffset start)
@@ -235,7 +238,7 @@ public sealed class MonitorHandler(
         lock (_gate) active = _active is { } a && a.Id == sessionId ? a : null;
 
         if (active is not null)
-            return Task.FromResult(Finish(active, "用户手动停止，之后的动作没有被记录"));
+            return Task.FromResult(Finish(active, UserStopReason));
 
         // 会话已结束（含超时自动结束）：重连读回已落盘的足迹
         try { return Task.FromResult(store.Find(sessionId)); }
@@ -322,7 +325,9 @@ public sealed class MonitorHandler(
             footprint = s.Acc!.Finalize(s.Id, probe, now());
         }
 
-        try { store.Save(footprint); }
+        // 用户在安装器启动之前就要求结束：这次什么都没装，不落盘（否则这份空足迹会顶掉"最近一次"的真实结果）
+        var skipSave = !s.HasRealRoot && ReferenceEquals(earlyStopReason, UserStopReason);
+        try { if (!skipSave) store.Save(footprint); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // 落盘失败（磁盘满/ACL 异常）：仍把足迹交给客户端，别让用户白等；之后重连读回会找不到，可接受的降级
@@ -359,11 +364,11 @@ public sealed class MonitorHandler(
     /// <summary>只把“新建类”事件投影成流式发现（给 App 实时展示进度感）；确定性由收尾时的完整分析给出。</summary>
     private static DiscoveryItem? DiscoveryOf(MonitorEvent e) => e switch
     {
-        FileEvent { IsCreate: true } f => new DiscoveryItem(FootprintEntryType.File, f.Path, FootprintConfidence.Possible),
+        FileEvent { IsCreate: true, IsDirectory: false } f => new DiscoveryItem(FootprintEntryType.File, f.Path, FootprintConfidence.Possible),
         FileRenameEvent m => new DiscoveryItem(FootprintEntryType.File, m.NewPath, FootprintConfidence.Possible),
         RegistryEvent { KeyPath.Length: > 0 } r when r.Kind == MonitorEventKind.RegistryCreate || r.IsNew => new DiscoveryItem(
-            string.IsNullOrEmpty(r.ValueName) ? FootprintEntryType.RegistryKey : FootprintEntryType.RegistryValue,
-            string.IsNullOrEmpty(r.ValueName) ? r.KeyPath : r.KeyPath + "\\" + r.ValueName, FootprintConfidence.Possible),
+            r.ValueName is null ? FootprintEntryType.RegistryKey : FootprintEntryType.RegistryValue,
+            r.ValueName is null ? r.KeyPath : r.KeyPath + "\\" + r.ValueName, FootprintConfidence.Possible),
         ServiceOrDriverEvent s => new DiscoveryItem(s.IsDriver ? FootprintEntryType.Driver : FootprintEntryType.Service,
             s.Name, FootprintConfidence.Possible),
         _ => null,

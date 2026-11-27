@@ -27,7 +27,12 @@ public sealed record ProcessStopEvent(int Pid, DateTimeOffset Time) : MonitorEve
 /// 打开已有文件绝不能算新建，否则用户原有的文件会被当成软件的）；IsCreate=false 表示删除。
 /// VolumeSerial 由 Agent 侧适配器为可移动/非系统卷填充，其余为 null。
 /// </summary>
-public sealed record FileEvent(int Pid, string Path, bool IsCreate, DateTimeOffset Time, string? VolumeSerial = null)
+/// <remarks>
+/// IsDirectory：这是目录。目录本身不进足迹；记下"本次新建的目录"只为一件事——判断改名的目标原来是否存在：
+/// 落在本次新建目录里的东西不可能是用户原有的。
+/// </remarks>
+public sealed record FileEvent(int Pid, string Path, bool IsCreate, DateTimeOffset Time, string? VolumeSerial = null,
+    bool IsDirectory = false)
     : MonitorEvent(Pid, Time);
 
 /// <summary>

@@ -19,6 +19,10 @@ public sealed class FootprintAccumulator
         public string Path = "";
         public string? VolumeSerial;
         public readonly List<Act> Acts = new();
+        // 这本账是被改名搬到一个本次监控里从没记录过的路径上的：那个路径原来有没有文件说不清
+        // （MoveFileEx 带"替换已有"覆盖时，被替换的文件不留任何事件，真机实测创建时间也不继承）。
+        // 收尾时只有落在本次新建的目录里才认它是新增
+        public bool LandedOnUnknownPath;
     }
 
     private readonly ProcessTree _tree;
@@ -34,6 +38,8 @@ public sealed class FootprintAccumulator
     private readonly List<(int Pid, DateTimeOffset Time)> _unresolvedRenames = new();  // 查不到原文件名的改名
     // 文件账的路径有序索引：目录改名时按前缀区间找下级文件，不用每次扫全部账本（账本里有全系统所有进程的记录）
     private readonly SortedSet<string> _filePaths = new(StringComparer.OrdinalIgnoreCase);
+    // 本次监控里新建的目录（谁、何时建的）：不进足迹，只用来判断改名目标原来是否存在
+    private readonly Dictionary<string, (int Pid, DateTimeOffset Time)> _createdDirs = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(InventoryItem Item, DateTimeOffset At)> _inventoryAdditions = new();
     private bool _inventoryUnavailable;
     private int _eventsLost;
@@ -63,6 +69,10 @@ public sealed class FootprintAccumulator
                     break;
                 case ProcessStopEvent pe:
                     _tree.Observe(pe);
+                    break;
+                case FileEvent { IsDirectory: true } de:
+                    if (de.IsCreate) _createdDirs[de.Path.TrimEnd('\\')] = (de.Pid, de.Time);
+                    else _createdDirs.Remove(de.Path.TrimEnd('\\'));
                     break;
                 case FileEvent fe:
                     Add(FootprintEntryType.File, fe.Path, fe.VolumeSerial,
@@ -148,7 +158,8 @@ public sealed class FootprintAccumulator
     /// 改名：把旧路径那本账【整本搬】到新路径，再记一次“动过”。
     /// 搬账而不是另起一本，是为了让“是不是本次新建的”跟着文件走：
     /// 临时名是树内新建的 → 最终名也算新建；改的是原本就有的文件 → 最终名只算动过，不算新建。
-    /// 改的若是目录，目录下已经记了账的文件一起搬，否则它们会因旧路径不存在而在复验时被当成幽灵丢掉。
+    /// 无论旧名自己有没有账，都按前缀把它下面已记账的文件一起搬：旧名有账不代表它是文件
+    /// （目录改名也会在新路径记一笔，连续改名两次时旧名就有账了），漏搬会让下级文件在复验时被当成幽灵丢掉。
     /// </summary>
     private void Rename(FileRenameEvent fr)
     {
@@ -159,20 +170,34 @@ public sealed class FootprintAccumulator
         }
         else if (!string.Equals(fr.OldPath, fr.NewPath, StringComparison.OrdinalIgnoreCase))
         {
-            if (RemoveFileLedger(fr.OldPath, out var self))
+            var oldPath = fr.OldPath.TrimEnd('\\');
+            var newPath = fr.NewPath.TrimEnd('\\');
+            var hadSelf = RemoveFileLedger(fr.OldPath, out var self);
+            if (hadSelf) MoveLedger(self, fr.NewPath);
+
+            var oldPrefix = oldPath + "\\";
+            var newPrefix = newPath + "\\";
+            var children = _filePaths.GetViewBetween(oldPrefix, oldPrefix + '￿').ToList();
+            foreach (var childPath in children)
+                if (RemoveFileLedger(childPath, out var child))
+                    MoveLedger(child, newPrefix + childPath[oldPrefix.Length..]);
+
+            // 本次新建的目录跟着改名走（含它下面新建的子目录）
+            var isCreatedDir = false;
+            foreach (var dir in _createdDirs.Keys.Where(d =>
+                         d.Equals(oldPath, StringComparison.OrdinalIgnoreCase)
+                         || d.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase)).ToList())
             {
-                MoveLedger(self, fr.NewPath);   // 旧名本身有账 → 它是文件（目录不记账），没有下级可搬
+                isCreatedDir |= dir.Equals(oldPath, StringComparison.OrdinalIgnoreCase);
+                var info = _createdDirs[dir];
+                _createdDirs.Remove(dir);
+                _createdDirs[newPath + dir[oldPath.Length..]] = info;
             }
-            else
-            {
-                // 可能是目录改名：按前缀区间找已记账的下级文件，一起搬
-                var oldPrefix = fr.OldPath.TrimEnd('\\') + "\\";
-                var newPrefix = fr.NewPath.TrimEnd('\\') + "\\";
-                var children = _filePaths.GetViewBetween(oldPrefix, oldPrefix + '￿').ToList();
-                foreach (var childPath in children)
-                    if (RemoveFileLedger(childPath, out var child))
-                        MoveLedger(child, newPrefix + childPath[oldPrefix.Length..]);
-            }
+
+            // 旧名在本次监控里从没出现过，又不是目录：那是监控前就有的文件被改名挪走（典型是先改成 .bak 再放新文件）。
+            // 在旧路径留一笔"动过"：之后同一路径上的新建，按"最早的树内动作"就判成改动而不是新增——不依赖文件名隧道
+            if (!hadSelf && children.Count == 0 && !isCreatedDir)
+                Add(FootprintEntryType.File, fr.OldPath, fr.VolumeSerial, new Act(fr.Pid, fr.Time, false, false));
         }
         Add(FootprintEntryType.File, fr.NewPath, fr.VolumeSerial, new Act(fr.Pid, fr.Time, false, false));
     }
@@ -189,9 +214,20 @@ public sealed class FootprintAccumulator
         else
         {
             source.Path = newPath;
+            source.LandedOnUnknownPath = true;   // 目标在本次监控里没有任何记录：原来有没有文件说不清
             _ledgers[key] = source;
             if (source.Type == FootprintEntryType.File) _filePaths.Add(newPath);
         }
+    }
+
+    /// <summary>路径落在本次监控里由树内/代办进程新建的目录之下（新目录里的东西不可能是用户原有的）。</summary>
+    private bool UnderCreatedDir(string path)
+    {
+        for (var dir = Path.GetDirectoryName(path); !string.IsNullOrEmpty(dir); dir = Path.GetDirectoryName(dir))
+            if (_createdDirs.TryGetValue(dir.TrimEnd('\\'), out var who)
+                && _tree.Attribute(who.Pid, who.Time) != AttributionLevel.Outside)
+                return true;
+        return false;
     }
 
     public MonitorFootprint Finalize(string id, IFootprintProbe probe, DateTimeOffset end)
@@ -249,6 +285,8 @@ public sealed class FootprintAccumulator
                 var isNew = owner.IsCreate;
                 // 空 REG_NONE 值：只有所在的键是本次（树内/代办）新建的，才能确定这个值是新的
                 if (isNew && owner.Uncertain && !KeyCreatedInSession(l.Path)) isNew = false;
+                // 改名搬到一个本次没记录过的路径上：可能覆盖了用户原有的文件，只有落在本次新建的目录里才确定是新的
+                if (isNew && l.LandedOnUnknownPath && !UnderCreatedDir(l.Path)) isNew = false;
 
                 var entry = new FootprintEntry(
                     l.Type, l.Path, l.Type is FootprintEntryType.File or FootprintEntryType.Directory ? l.VolumeSerial : null,

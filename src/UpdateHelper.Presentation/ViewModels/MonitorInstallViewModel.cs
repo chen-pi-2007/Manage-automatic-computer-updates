@@ -89,6 +89,10 @@ public sealed partial class MonitorInstallViewModel : ObservableObject
             Show(footprint);
             Message = null;
         }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            Message = "已结束监控：安装程序还没有启动，这次没有记录任何东西。";
+        }
         catch (Exception ex)
         {
             Message = $"监控没有完成：{ex.Message}";   // 后端的消息都是中文；上一次的结果保留不动
@@ -134,7 +138,9 @@ public sealed partial class MonitorInstallViewModel : ObservableObject
                      .ThenBy(e => e.Type)
                      .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase))
         {
-            Entries.Add(new FootprintRow(KindText(e.Type), e.Path,
+            // 默认值的路径以 \ 结尾（值名为空），给用户显示成"（默认）"
+            var shown = e.Type == FootprintEntryType.RegistryValue && e.Path.EndsWith('\\') ? e.Path + "（默认）" : e.Path;
+            Entries.Add(new FootprintRow(KindText(e.Type), shown,
                 e.Confidence == FootprintConfidence.Certain ? "确定" : "可能",
                 e.IsNew ? "新增" : "修改"));
         }
@@ -147,6 +153,8 @@ public sealed partial class MonitorInstallViewModel : ObservableObject
         CompletenessText = fp.Completeness.IsComplete
             ? "记录完整"
             : "可能不完整：" + string.Join("；", fp.Completeness.Reasons);
+        if (fp.EngineVersion < MonitorFootprint.CurrentEngineVersion)
+            CompletenessText += "。注意：这是旧版本记录的结果，其中“新增 / 修改”的区分可能不准，仅供参考";
     }
 
     private static string KindText(FootprintEntryType t) => t switch

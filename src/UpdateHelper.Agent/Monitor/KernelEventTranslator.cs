@@ -20,7 +20,7 @@ public sealed class KernelEventTranslator(
     private Dictionary<ulong, string> _openFilesPrev = new();
     private readonly RegistryObjectTable _keys = new();
 
-    // FILE_DIRECTORY_FILE：这是在建目录。目录本身不记账，靠里面的文件体现
+    // FILE_DIRECTORY_FILE：这是在建目录。目录本身不进足迹，只用来判断改名目标是否落在本次新建的目录里
     private const uint FileDirectoryFile = 0x1;
     // REG_CREATED_NEW_KEY：这次调用真的新建了键（2 = REG_OPENED_EXISTING_KEY，只是打开了已有的）
     private const int RegCreatedNewKey = 1;
@@ -40,12 +40,15 @@ public sealed class KernelEventTranslator(
     private string? OpenedPath(ulong fileObject) =>
         _openFiles.TryGetValue(fileObject, out var p) || _openFilesPrev.TryGetValue(fileObject, out p) ? p : null;
 
-    /// <summary>内核只在磁盘上真的新建了文件时才发这个事件；打开已有文件不会走到这里。</summary>
+    /// <summary>
+    /// 内核只在磁盘上真的新建了文件（或目录）时才发这个事件；打开已有的不会走到这里。
+    /// 目录也产出（IsDirectory=true）：Core 不把它记进足迹，只用来判断改名目标是否落在本次新建的目录里。
+    /// </summary>
     public MonitorEvent? FileCreatedNew(int pid, string? ntPath, uint createOptions, DateTimeOffset time)
     {
-        if (string.IsNullOrEmpty(ntPath) || (createOptions & FileDirectoryFile) != 0) return null;
+        if (string.IsNullOrEmpty(ntPath)) return null;
         var (path, serial) = resolveFilePath(ntPath);
-        return new FileEvent(pid, path, IsCreate: true, time, serial);
+        return new FileEvent(pid, path, IsCreate: true, time, serial, IsDirectory: (createOptions & FileDirectoryFile) != 0);
     }
 
     public MonitorEvent? FileDeleted(int pid, string? ntPath, DateTimeOffset time)

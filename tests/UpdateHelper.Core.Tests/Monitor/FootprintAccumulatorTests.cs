@@ -155,10 +155,15 @@ public class FootprintAccumulatorTests
 
     private const string Dir = @"C:\Program Files\Foo";
 
+    // 安装目录是这次装的时候新建的（安装器的典型做法）
+    private static void InstallDirCreated(FootprintAccumulator acc) =>
+        acc.Observe(new FileEvent(Root, Dir, true, T(0), IsDirectory: true));
+
     [Fact]
-    public void Temp_file_renamed_to_final_name_is_recorded_as_new_under_final_name()
+    public void Temp_file_renamed_to_final_name_in_new_install_dir_is_recorded_as_new()
     {
         var acc = NewAcc();
+        InstallDirCreated(acc);
         acc.Observe(new FileEvent(Root, Dir + @"\final.dat.tmp", true, T(1)));
         acc.Observe(new FileRenameEvent(Root, Dir + @"\final.dat.tmp", Dir + @"\final.dat", T(2)));
         var e = Assert.Single(acc.Finalize("id", new FakeProbe(), T(10)).Entries);
@@ -168,18 +173,66 @@ public class FootprintAccumulatorTests
     }
 
     [Fact]
+    public void Temp_file_renamed_onto_unrecorded_path_in_existing_dir_is_only_a_change()
+    {
+        // MoveFileEx 带"替换已有"覆盖用户原有文件时，被替换的文件不留事件、创建时间也不继承（真机实测）。
+        // 目标在本次没有任何记录、又不在新建目录里：说不清原来有没有，只能算改动，绝不能算新增
+        var acc = NewAcc();
+        acc.Observe(new FileEvent(Root, Dir + @"\settings.json.tmp", true, T(1)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\settings.json.tmp", Dir + @"\settings.json", T(2)));
+        var e = Assert.Single(acc.Finalize("id", new FakeProbe(), T(10)).Entries);
+        Assert.Equal(Dir + @"\settings.json", e.Path);
+        Assert.False(e.IsNew);
+    }
+
+    [Fact]
+    public void Preexisting_file_renamed_to_bak_then_replaced_by_new_file_is_not_new()
+    {
+        // 先把原文件改名成 .bak，再在原路径新建：原路径留了"动过"的记号，新建只算改动（不依赖文件名隧道）
+        var acc = NewAcc();
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\app.ini", Dir + @"\app.ini.bak", T(1)));
+        acc.Observe(new FileEvent(Root, Dir + @"\app.ini", true, T(2)));
+        var probe = new FakeProbe();
+        var fp = acc.Finalize("id", probe, T(10));
+        Assert.False(fp.Entries.Single(x => x.Path == Dir + @"\app.ini").IsNew);
+        Assert.False(fp.Entries.Single(x => x.Path == Dir + @"\app.ini.bak").IsNew);
+    }
+
+    [Fact]
     public void Renaming_a_preexisting_file_is_not_new()
     {
         var acc = NewAcc();
         acc.Observe(new FileRenameEvent(Root, Dir + @"\old.cfg", Dir + @"\new.cfg", T(1)));
-        var e = Assert.Single(acc.Finalize("id", new FakeProbe(), T(10)).Entries);
+        var probe = new FakeProbe();
+        probe.Missing.Add(Dir + @"\old.cfg");   // 改名后旧名已不存在
+        var e = Assert.Single(acc.Finalize("id", probe, T(10)).Entries);
+        Assert.Equal(Dir + @"\new.cfg", e.Path);
         Assert.False(e.IsNew);   // 原本就有的文件：只算动过，删除时不能当软件新建的
+    }
+
+    [Fact]
+    public void Renaming_a_directory_twice_still_moves_the_files_inside()
+    {
+        // 回归：第二次改名时旧目录名已经有一笔"动过"的账，不能因此当成文件而漏搬下级
+        var acc = NewAcc();
+        InstallDirCreated(acc);
+        acc.Observe(new FileEvent(Root, Dir + @"\tmp1", true, T(1), IsDirectory: true));
+        acc.Observe(new FileEvent(Root, Dir + @"\tmp1\a.dll", true, T(2)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\tmp1", Dir + @"\tmp2", T(3)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\tmp2", Dir + @"\app", T(4)));
+        var probe = new FakeProbe();
+        probe.Missing.Add(Dir + @"\tmp2");
+        probe.Missing.Add(Dir + @"\app");   // 目录本身不是文件，复验按文件判
+        var e = Assert.Single(acc.Finalize("id", probe, T(10)).Entries);
+        Assert.Equal(Dir + @"\app\a.dll", e.Path);
+        Assert.True(e.IsNew);
     }
 
     [Fact]
     public void Renaming_a_directory_moves_files_already_recorded_inside_it()
     {
         var acc = NewAcc();
+        InstallDirCreated(acc);
         acc.Observe(new FileEvent(Root, Dir + @"\staging\a.dll", true, T(1)));
         acc.Observe(new FileRenameEvent(Root, Dir + @"\staging", Dir + @"\bin", T(2)));
         var probe = new FakeProbe();

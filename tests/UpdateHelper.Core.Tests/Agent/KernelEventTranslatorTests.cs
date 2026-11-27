@@ -23,9 +23,13 @@ public class KernelEventTranslatorTests
     }
 
     [Fact]
-    public void Created_directory_is_not_recorded()
+    public void Created_directory_is_reported_as_directory()
     {
-        Assert.Null(New().FileCreatedNew(5, @"\Device\HarddiskVolume1\a\dir", 0x02000001, T));
+        // 目录也要报给 Core（不进足迹，只用来判断改名目标是否落在本次新建的目录里）
+        var e = Assert.IsType<FileEvent>(New().FileCreatedNew(5, @"\Device\HarddiskVolume1\a\dir", 0x02000001, T));
+        Assert.True(e.IsDirectory);
+        Assert.Equal(@"C:\a\dir", e.Path);
+        Assert.False(Assert.IsType<FileEvent>(New().FileCreatedNew(5, @"\Device\HarddiskVolume1\a\f.txt", 0x05400060, T)).IsDirectory);
     }
 
     [Fact]

@@ -372,6 +372,9 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
 
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>发出"结束监控"后等助手回足迹的上限（收尾要停 ETW、复验、取名册、落盘，正常几秒）。测试可调小。</summary>
+    internal TimeSpan StopReplyTimeout { get; init; } = TimeSpan.FromSeconds(60);
+
     /// <summary>
     /// start 为 StartMonitor 时走两阶段握手：发 StartMonitor（不带根 PID）→ 等 Ready → 回调 onReadyLaunch 启动安装器并拿根 PID
     /// → 发 SetMonitorRoot 补入 → 继续收 Discovery 直到最终 Footprint；为 StopMonitor（重连读回）时直接等足迹。
@@ -420,13 +423,23 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
                 finally { writeGate.Release(); }
             }
 
+            // 还没开始就要求停止了：什么都不发（不让助手白起一次会话、落一份空足迹）
+            stopToken.ThrowIfCancellationRequested();
             await WriteAsync(start);
+
+            // 发出停止后最多等这么久：助手收尾卡住时别让界面一直挂在"正在结束"
+            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var stopTimedOut = false;
 
             // 停止：只发一次；写失败（连接已断）不管，读循环会发现断开
             using var stopRegistration = start.Op == AgentOp.StartMonitor
                 ? stopToken.Register(() => _ = Task.Run(async () =>
                 {
-                    try { await WriteAsync(start with { Op = AgentOp.StopMonitor }); }
+                    try
+                    {
+                        await WriteAsync(start with { Op = AgentOp.StopMonitor });
+                        readCts.CancelAfter(StopReplyTimeout);
+                    }
                     catch (Exception) { /* 连接已断或已取消 */ }
                 }))
                 : default;
@@ -435,20 +448,42 @@ public sealed class MonitorPipeClient(string pipeName, string expectedServerExe)
 
             while (true)
             {
-                var line = await LineReader.ReadLineAsync(pipe, MaxMonitorLineChars, cancellationToken)
-                           ?? throw new AgentUnavailableException("后台助手中途断开了连接", AgentFailureKind.Broken);
+                string? line;
+                try
+                {
+                    line = await LineReader.ReadLineAsync(pipe, MaxMonitorLineChars, readCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    stopTimedOut = true;
+                    line = null;
+                }
+                if (stopTimedOut)
+                    throw new AgentUnavailableException("已经要求结束监控，但后台助手迟迟没有返回结果", AgentFailureKind.Broken);
+                if (line is null)
+                    throw new AgentUnavailableException("后台助手中途断开了连接", AgentFailureKind.Broken);
                 var message = AgentProtocol.Decode<AgentResponse>(line, MaxMonitorLineChars)
                               ?? throw new AgentUnavailableException("后台助手回复的格式不对", AgentFailureKind.Broken);
                 switch (message.Type)
                 {
                     case AgentMessageType.Ready:
                         // ETW 已就绪、事件已在缓冲：现在才启动安装器（这正是修复点），拿到根 PID 后补发 SetMonitorRoot
-                        // 已经要求停止了就不再启动安装器
-                        if (awaitingRoot && !stopToken.IsCancellationRequested)
+                        // 从"检查是否已要求停止"到"写完根 PID"全程持有写锁：停止请求只能排在 SetMonitorRoot 之后，
+                        // 绝不会出现"安装器已经启动、助手却先收到停止、按没有根进程收尾"——那样这次安装就完全没被监控
+                        if (awaitingRoot)
                         {
                             awaitingRoot = false;   // 只握手一次，重复的 Ready 忽略
-                            var rootPid = await onReadyLaunch!();
-                            await WriteAsync(start with { Op = AgentOp.SetMonitorRoot, RootPid = rootPid });
+                            await writeGate.WaitAsync(cancellationToken);
+                            try
+                            {
+                                if (!stopToken.IsCancellationRequested)   // 已经要求停止了就不再启动安装器
+                                {
+                                    var rootPid = await onReadyLaunch!();
+                                    var setRoot = start with { Op = AgentOp.SetMonitorRoot, RootPid = rootPid };
+                                    await writer.WriteLineAsync(AgentProtocol.Encode(setRoot).AsMemory(), cancellationToken);
+                                }
+                            }
+                            finally { writeGate.Release(); }
                         }
                         break;
                     case AgentMessageType.Discovery:

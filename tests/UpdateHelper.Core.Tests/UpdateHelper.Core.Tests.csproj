@@ -30,6 +30,9 @@
     <!-- 注册表键对象表与内核事件翻译器：纯逻辑，链接进来单测 -->
     <Compile Include="..\..\src\UpdateHelper.Agent\Monitor\RegistryObjectTable.cs" Link="Linked\RegistryObjectTable.cs" />
     <Compile Include="..\..\src\UpdateHelper.Agent\Monitor\KernelEventTranslator.cs" Link="Linked\KernelEventTranslator.cs" />
+    <!-- 复验探针的真实实现（只读注册表/文件，测试在临时键和临时目录里自测） -->
+    <Compile Include="..\..\src\UpdateHelper.Agent\Monitor\RealFootprintProbe.cs" Link="Linked\RealFootprintProbe.cs" />
+    <Compile Include="..\..\src\UpdateHelper.Agent\Monitor\RealSystemInventory.cs" Link="Linked\RealSystemInventory.cs" />
   </ItemGroup>
 
 </Project>

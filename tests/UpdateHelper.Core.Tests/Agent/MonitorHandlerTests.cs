@@ -377,4 +377,33 @@ public class MonitorHandlerTests
         Assert.False(fp.Completeness.IsComplete);
         Assert.Contains(fp.Completeness.Reasons, r => r.Contains("计划任务"));
     }
+
+    [Fact]
+    public async Task Existing_service_whose_type_changed_is_not_reported_as_new_driver()
+    {
+        // 同名的服务在两次快照之间被读成了驱动（重新配置 / 某次读不到类型）：它是原有的，不是新增
+        var inv = new FakeInventory(
+            [new InventoryItem(FootprintEntryType.Service, "Foo")],
+            [new InventoryItem(FootprintEntryType.Driver, "foo")]);
+        using var rig = new Rig(limits: new MonitorLimits(
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5), TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5)), inventory: inv);
+
+        var fp = await RunToRootExit(rig);
+
+        Assert.Empty(fp.Entries);
+    }
+
+    [Fact]
+    public async Task User_stop_before_installer_started_saves_nothing()
+    {
+        using var rig = new Rig();
+        var run = rig.Handler.StartAsync(@"C:\setup.exe", rig.Send, CancellationToken.None, "s1");
+        await rig.WaitStarted();
+        await rig.WaitReady();
+
+        await rig.Handler.StopAsync("s1");   // 还没 SetRoot：安装器没启动
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(rig.Store.ReadAll());   // 空足迹不落盘，免得顶掉"最近一次"的真实结果
+    }
 }

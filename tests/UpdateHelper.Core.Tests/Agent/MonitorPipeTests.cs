@@ -254,4 +254,90 @@ public sealed class MonitorPipeTests
         Assert.Null(AgentProtocol.Decode<AgentRequest>(new string('x', AgentProtocol.MaxLineChars + 1)));
         Assert.Null(AgentProtocol.Decode<AgentResponse>(""));
     }
+
+    // —— 结束监控（stopToken）——
+
+    [Fact]
+    public async Task Stop_is_sent_on_the_same_connection_and_returns_the_footprint()
+    {
+        var pipe = UniquePipe();
+        var handler = new FakeHandler(discoveries: 1, hangAfterDiscoveries: true);   // 会话一直不自己结束
+        var (server, stopServer) = StartServer(pipe, handler);
+        using var userStop = new CancellationTokenSource();
+
+        var run = new MonitorPipeClient(pipe, ThisExe)
+            .RunAsync(StartRequest("s-stop"), _ => { }, CancellationToken.None, LaunchReturning(4321), userStop.Token);
+        await handler.Sent.Task.WaitAsync(Timeout);
+        Assert.Equal(4321, await handler.RootSet.Task.WaitAsync(Timeout));   // 根 PID 先到
+
+        userStop.Cancel();
+        var footprint = await run.WaitAsync(Timeout);
+
+        Assert.Equal("s-stop", await handler.Stopped.Task.WaitAsync(Timeout));   // 服务端收到了这个会话的停止
+        Assert.Equal("s-stop", footprint.Id);
+        stopServer.Cancel();
+        await server.WaitAsync(Timeout);
+    }
+
+    [Fact]
+    public async Task Stop_requested_before_start_sends_nothing()
+    {
+        var pipe = UniquePipe();
+        var handler = new FakeHandler(discoveries: 0);
+        var (server, stopServer) = StartServer(pipe, handler);
+        using var userStop = new CancellationTokenSource();
+        userStop.Cancel();
+        var launched = false;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new MonitorPipeClient(pipe, ThisExe)
+            .RunAsync(StartRequest("s-early"), _ => { }, CancellationToken.None,
+                () => { launched = true; return Task.FromResult(1); }, userStop.Token));
+
+        Assert.False(launched);                      // 安装器没被启动
+        Assert.False(handler.Sent.Task.IsCompleted); // 服务端没收到开始请求
+        stopServer.Cancel();
+        await server.WaitAsync(Timeout);
+    }
+
+    [Fact]
+    public async Task Stop_without_reply_times_out_instead_of_hanging()
+    {
+        var pipe = UniquePipe();
+        var handler = new SilentOnStopHandler();
+        var (server, stopServer) = StartServer(pipe, handler);
+        using var userStop = new CancellationTokenSource();
+
+        var run = new MonitorPipeClient(pipe, ThisExe) { StopReplyTimeout = TimeSpan.FromMilliseconds(300) }
+            .RunAsync(StartRequest("s-mute"), _ => { }, CancellationToken.None, LaunchReturning(1), userStop.Token);
+        await handler.Rooted.Task.WaitAsync(Timeout);
+        userStop.Cancel();
+
+        var ex = await Assert.ThrowsAsync<AgentUnavailableException>(() => run.WaitAsync(Timeout));
+        Assert.Contains("迟迟没有返回", ex.Message);
+        stopServer.Cancel();
+        await server.WaitAsync(Timeout);
+    }
+
+    // 收到停止后迟迟不回足迹的处理器（模拟助手收尾卡住）
+    private sealed class SilentOnStopHandler : IMonitorHandler
+    {
+        public readonly TaskCompletionSource Rooted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task StartAsync(string installerPath, Func<AgentResponse, Task> send,
+            CancellationToken cancellationToken, string? sessionId = null)
+        {
+            await send(new AgentResponse(AgentMessageType.Ready));
+            try { await Task.Delay(Timeout, cancellationToken); } catch (OperationCanceledException) { }
+        }
+
+        public void SetRoot(string sessionId, int rootPid) => Rooted.TrySetResult();
+
+        public async Task<MonitorFootprint?> StopAsync(string sessionId)
+        {
+            await Task.Delay(Timeout);
+            return null;
+        }
+
+        public void OnClientDisconnected() { }
+    }
 }

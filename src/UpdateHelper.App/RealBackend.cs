@@ -99,6 +99,9 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
         if (!File.Exists(pipePath))
             throw new InvalidOperationException("监控服务没有按时启动（可能没有获得管理员权限或被安全软件拦截）。");
 
+        // 等监控服务启动的这段时间里用户已经点了"结束监控"：安装程序还没启动，直接放弃
+        stopToken.ThrowIfCancellationRequested();
+
         var request = new AgentRequest(AgentProtocol.Version, AgentOp.StartMonitor,
             InstallerPath: installerPath, MonitorSessionId: Guid.NewGuid().ToString("N"));
 
