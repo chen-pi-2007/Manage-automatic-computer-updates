@@ -95,7 +95,10 @@ public sealed class RealBackend(string rulesDirectory, RuleSourceStore? sourceSt
             _agent.StartMonitorServer();
         }, ct);
         for (var i = 0; i < 60 && !File.Exists(pipePath); i++)
+        {
+            stopToken.ThrowIfCancellationRequested();   // 等的时候用户点了"结束监控"：安装程序还没启动，直接放弃
             await Task.Delay(250, ct);
+        }
         if (!File.Exists(pipePath))
             throw new InvalidOperationException("监控服务没有按时启动（可能没有获得管理员权限或被安全软件拦截）。");
 

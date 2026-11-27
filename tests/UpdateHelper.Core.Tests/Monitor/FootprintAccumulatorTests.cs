@@ -228,6 +228,98 @@ public class FootprintAccumulatorTests
         Assert.True(e.IsNew);
     }
 
+    // —— 二次复审：新建目录记录的过期与冒用 ——
+
+    private const int OtherPid = 9999;      // 树外进程
+
+    [Fact]
+    public void Install_rollback_restoring_the_original_dir_does_not_make_user_files_new()
+    {
+        // 原目录 P 改名挪走 → 新建 P → 失败删掉新 P → 原目录改回 P → 再用临时文件改名覆盖 P 里用户原有的文件
+        var acc = NewAcc();
+        var p = Dir + @"\Data";
+        acc.Observe(new FileRenameEvent(Root, p, p + ".old", T(1)));
+        acc.Observe(new FileEvent(Root, p, true, T(2), IsDirectory: true));
+        acc.Observe(new FileEvent(Root, p, false, T(3)));   // 删除事件不带目录标志
+        acc.Observe(new FileRenameEvent(Root, p + ".old", p, T(4)));
+        acc.Observe(new FileEvent(Root, p + @"\user.cfg.tmp", true, T(5)));
+        acc.Observe(new FileRenameEvent(Root, p + @"\user.cfg.tmp", p + @"\user.cfg", T(6)));
+        var probe = new FakeProbe();
+        probe.Missing.Add(p + ".old");
+        probe.Missing.Add(p);
+        var e = Assert.Single(acc.Finalize("id", probe, T(10)).Entries, x => x.Path == p + @"\user.cfg");
+        Assert.False(e.IsNew);
+    }
+
+    [Fact]
+    public void Foreign_dir_moved_into_a_new_dir_does_not_count_as_new()
+    {
+        var acc = NewAcc();
+        InstallDirCreated(acc);
+        var userDir = @"C:\Users\u\Documents\Old";
+        acc.Observe(new FileRenameEvent(Root, userDir, Dir + @"\Old", T(1)));   // 用户原有目录被搬进新建目录
+        acc.Observe(new FileEvent(Root, Dir + @"\Old\x.tmp", true, T(2)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\Old\x.tmp", Dir + @"\Old\x", T(3)));
+        var probe = new FakeProbe();
+        probe.Missing.Add(userDir);
+        probe.Missing.Add(Dir + @"\Old");
+        var e = Assert.Single(acc.Finalize("id", probe, T(10)).Entries, x => x.Path == Dir + @"\Old\x");
+        Assert.False(e.IsNew);
+    }
+
+    [Fact]
+    public void Dir_created_by_an_outside_process_does_not_count()
+    {
+        var acc = NewAcc();
+        acc.Observe(new FileEvent(OtherPid, Dir, true, T(0), IsDirectory: true));   // 树外进程建的
+        acc.Observe(new FileEvent(Root, Dir + @"\a.tmp", true, T(1)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\a.tmp", Dir + @"\a", T(2)));
+        Assert.False(Assert.Single(acc.Finalize("id", new FakeProbe(), T(10)).Entries).IsNew);
+    }
+
+    [Fact]
+    public void Created_dir_record_follows_the_dir_when_renamed()
+    {
+        // 父目录 Dir 不是新建的：只有被改名的 staging 是新建的，验证它的记录随改名迁到 bin
+        var acc = NewAcc();
+        acc.Observe(new FileEvent(Root, Dir + @"\staging", true, T(1), IsDirectory: true));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\staging", Dir + @"\bin", T(2)));
+        acc.Observe(new FileEvent(Root, Dir + @"\bin\a.tmp", true, T(3)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\bin\a.tmp", Dir + @"\bin\a.dll", T(4)));
+        var probe = new FakeProbe();
+        probe.Missing.Add(Dir + @"\bin");
+        var e = Assert.Single(acc.Finalize("id", probe, T(10)).Entries);
+        Assert.Equal(Dir + @"\bin\a.dll", e.Path);
+        Assert.True(e.IsNew);
+    }
+
+    [Fact]
+    public void Overwrite_after_outside_atomic_save_is_not_new()
+    {
+        // 用户的程序（树外）在监控期间做"原子保存"：把 X 挪走、临时文件改名成 X；之后安装器又用临时文件改名覆盖 X
+        var acc = NewAcc();
+        var x = Dir + @"\doc.txt";
+        acc.Observe(new FileEvent(OtherPid, x + ".~tmp", true, T(1)));
+        acc.Observe(new FileRenameEvent(OtherPid, x + ".~tmp", x, T(2)));
+        acc.Observe(new FileEvent(Root, x + ".new", true, T(3)));
+        acc.Observe(new FileRenameEvent(Root, x + ".new", x, T(4)));
+        Assert.False(Assert.Single(acc.Finalize("id", new FakeProbe(), T(10)).Entries, e => e.Path == x).IsNew);
+    }
+
+    [Fact]
+    public void Files_carried_by_a_dir_rename_keep_their_new_status()
+    {
+        // 目录改名不可能覆盖已有目录：下级里直接新建的文件仍是新增（即便没看到目录本身的新建事件）
+        var acc = NewAcc();
+        acc.Observe(new FileEvent(Root, Dir + @"\staging\a.dll", true, T(1)));
+        acc.Observe(new FileRenameEvent(Root, Dir + @"\staging", Dir + @"\bin", T(2)));
+        var probe = new FakeProbe();
+        probe.Missing.Add(Dir + @"\bin");
+        var e = Assert.Single(acc.Finalize("id", probe, T(10)).Entries);
+        Assert.Equal(Dir + @"\bin\a.dll", e.Path);
+        Assert.True(e.IsNew);
+    }
+
     [Fact]
     public void Renaming_a_directory_moves_files_already_recorded_inside_it()
     {

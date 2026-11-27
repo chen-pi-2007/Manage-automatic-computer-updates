@@ -40,6 +40,8 @@ public sealed class FootprintAccumulator
     private readonly SortedSet<string> _filePaths = new(StringComparer.OrdinalIgnoreCase);
     // 本次监控里新建的目录（谁、何时建的）：不进足迹，只用来判断改名目标原来是否存在
     private readonly Dictionary<string, (int Pid, DateTimeOffset Time)> _createdDirs = new(StringComparer.OrdinalIgnoreCase);
+    // 外来目录：不是本次新建、而是从别处改名搬来的目录（里面可能是用户原有的文件）。值不用，只用键
+    private readonly Dictionary<string, (int Pid, DateTimeOffset Time)> _foreignDirs = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(InventoryItem Item, DateTimeOffset At)> _inventoryAdditions = new();
     private bool _inventoryUnavailable;
     private int _eventsLost;
@@ -71,10 +73,17 @@ public sealed class FootprintAccumulator
                     _tree.Observe(pe);
                     break;
                 case FileEvent { IsDirectory: true } de:
-                    if (de.IsCreate) _createdDirs[de.Path.TrimEnd('\\')] = (de.Pid, de.Time);
-                    else _createdDirs.Remove(de.Path.TrimEnd('\\'));
-                    break;
+                    {
+                        var dir = de.Path.TrimEnd('\\');
+                        ForgetDirsUnder(dir);   // 这里原来的目录（及其下级的记录）已经不是现在这个了
+                        // 只记树内/代办进程建的目录：判断时也只认它们，树外的记了白占地方
+                        if (de.IsCreate && _tree.Attribute(de.Pid, de.Time) != AttributionLevel.Outside)
+                            _createdDirs[dir] = (de.Pid, de.Time);
+                        break;
+                    }
                 case FileEvent fe:
+                    // 删除事件不带目录标志：删的可能是目录，它和下级目录的记录一并作废（否则过期记录会被冒用）
+                    if (!fe.IsCreate) ForgetDirsUnder(fe.Path.TrimEnd('\\'));
                     Add(FootprintEntryType.File, fe.Path, fe.VolumeSerial,
                         new Act(fe.Pid, fe.Time, fe.IsCreate, !fe.IsCreate));
                     break;
@@ -173,60 +182,101 @@ public sealed class FootprintAccumulator
             var oldPath = fr.OldPath.TrimEnd('\\');
             var newPath = fr.NewPath.TrimEnd('\\');
             var hadSelf = RemoveFileLedger(fr.OldPath, out var self);
-            if (hadSelf) MoveLedger(self, fr.NewPath);
+            if (hadSelf) MoveLedger(self, fr.NewPath, markUnknownTarget: true);
 
             var oldPrefix = oldPath + "\\";
             var newPrefix = newPath + "\\";
+            // 下级文件跟着目录走：目录改名不可能覆盖已有目录，所以下级不打"目标去向不明"的标记
             var children = _filePaths.GetViewBetween(oldPrefix, oldPrefix + '￿').ToList();
             foreach (var childPath in children)
                 if (RemoveFileLedger(childPath, out var child))
-                    MoveLedger(child, newPrefix + childPath[oldPrefix.Length..]);
+                    MoveLedger(child, newPrefix + childPath[oldPrefix.Length..], markUnknownTarget: false);
 
-            // 本次新建的目录跟着改名走（含它下面新建的子目录）
-            var isCreatedDir = false;
-            foreach (var dir in _createdDirs.Keys.Where(d =>
-                         d.Equals(oldPath, StringComparison.OrdinalIgnoreCase)
-                         || d.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase)).ToList())
-            {
-                isCreatedDir |= dir.Equals(oldPath, StringComparison.OrdinalIgnoreCase);
-                var info = _createdDirs[dir];
-                _createdDirs.Remove(dir);
-                _createdDirs[newPath + dir[oldPath.Length..]] = info;
-            }
+            // 目录记录（新建的 / 外来的）跟着改名走
+            ForgetDirsUnder(newPath);   // 目标位置原有的记录已经不是现在这个了
+            var isCreatedDir = MigrateDirs(_createdDirs, oldPath, newPath);
+            var isForeignDir = MigrateDirs(_foreignDirs, oldPath, newPath);
+            // 不是本次新建的东西被搬进了某个新建目录里：若它是个目录，就是"外来目录"，里面装的可能是用户原有的文件，
+            // 往上找父目录时先碰到它就不能算"在新建目录里"（是文件也无妨：文件路径不会成为别人的父目录）。
+            // 没落进新建目录的不用标：往上本来就找不到新建目录（这样全系统的改名不会把这份记录撑大）
+            if (!isCreatedDir && !isForeignDir && UnderCreatedDir(newPath)) _foreignDirs[newPath] = default;
 
             // 旧名在本次监控里从没出现过，又不是目录：那是监控前就有的文件被改名挪走（典型是先改成 .bak 再放新文件）。
-            // 在旧路径留一笔"动过"：之后同一路径上的新建，按"最早的树内动作"就判成改动而不是新增——不依赖文件名隧道
-            if (!hadSelf && children.Count == 0 && !isCreatedDir)
+            // 在旧路径留一笔"动过"：之后同一路径上的新建，按"最早的树内动作"就判成改动而不是新增——不依赖文件名隧道。
+            // 只给树内/代办的改名留（全系统每次改名都留会白白撑大账本；树外进程的情况由合并时的保守处理兜住）
+            if (!hadSelf && children.Count == 0 && !isCreatedDir
+                && _tree.Attribute(fr.Pid, fr.Time) != AttributionLevel.Outside)
                 Add(FootprintEntryType.File, fr.OldPath, fr.VolumeSerial, new Act(fr.Pid, fr.Time, false, false));
         }
         Add(FootprintEntryType.File, fr.NewPath, fr.VolumeSerial, new Act(fr.Pid, fr.Time, false, false));
     }
 
-    private void MoveLedger(Ledger source, string newPath)
+    /// <param name="markUnknownTarget">
+    /// 文件改名到 newPath 时为 true：目标处原来有没有文件说不清（可能是"改名覆盖"），收尾要额外确认。
+    /// 目录改名带着下级搬时为 false：目录改名不可能覆盖已有目录，下级不会覆盖用户文件。
+    /// </param>
+    private void MoveLedger(Ledger source, string newPath, bool markUnknownTarget)
     {
         var key = Key(source.Type, newPath);
         if (_ledgers.TryGetValue(key, out var existing))
         {
-            // 目标路径已有账（比如被覆盖的旧文件）：并进去，保持时间先后
+            // 目标路径已有账：并进去，保持时间先后。
+            // 只有已有账的最后一个动作是"删除"（确定此刻那里是空的）才信得过；否则那里此刻可能有文件
+            // （比如树外程序先把用户文件改名挪走又放回来），这次改名可能是覆盖，同样要额外确认
+            if (markUnknownTarget && !(existing.Acts.Count > 0 && existing.Acts[^1].IsDelete))
+                existing.LandedOnUnknownPath = true;
             existing.Acts.AddRange(source.Acts);
             existing.VolumeSerial ??= source.VolumeSerial;
+            existing.LandedOnUnknownPath |= source.LandedOnUnknownPath;
         }
         else
         {
             source.Path = newPath;
-            source.LandedOnUnknownPath = true;   // 目标在本次监控里没有任何记录：原来有没有文件说不清
+            source.LandedOnUnknownPath |= markUnknownTarget;   // 目标在本次监控里没有任何记录：原来有没有文件说不清
             _ledgers[key] = source;
             if (source.Type == FootprintEntryType.File) _filePaths.Add(newPath);
         }
     }
 
-    /// <summary>路径落在本次监控里由树内/代办进程新建的目录之下（新目录里的东西不可能是用户原有的）。</summary>
+    /// <summary>作废某目录及其下级的目录记录（新建的、外来的都清）。</summary>
+    private void ForgetDirsUnder(string dir)
+    {
+        var prefix = dir + "\\";
+        foreach (var map in new IDictionary<string, (int, DateTimeOffset)>[] { _createdDirs, _foreignDirs })
+            foreach (var d in map.Keys.Where(d => d.Equals(dir, StringComparison.OrdinalIgnoreCase)
+                                                  || d.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList())
+                map.Remove(d);
+    }
+
+    /// <summary>把 oldDir 及其下级的目录记录改到 newDir 下；返回 oldDir 本身是否在记录里。</summary>
+    private static bool MigrateDirs(Dictionary<string, (int Pid, DateTimeOffset Time)> map, string oldDir, string newDir)
+    {
+        var prefix = oldDir + "\\";
+        var self = false;
+        foreach (var d in map.Keys.Where(d => d.Equals(oldDir, StringComparison.OrdinalIgnoreCase)
+                                              || d.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList())
+        {
+            self |= d.Equals(oldDir, StringComparison.OrdinalIgnoreCase);
+            var info = map[d];
+            map.Remove(d);
+            map[newDir + d[oldDir.Length..]] = info;
+        }
+        return self;
+    }
+
+    /// <summary>
+    /// 路径落在本次监控里由树内/代办进程新建的目录之下（新目录里的东西不可能是用户原有的）。
+    /// 往上找时先碰到"外来目录"（别处搬来的、可能装着用户原有文件）就不算。
+    /// </summary>
     private bool UnderCreatedDir(string path)
     {
         for (var dir = Path.GetDirectoryName(path); !string.IsNullOrEmpty(dir); dir = Path.GetDirectoryName(dir))
-            if (_createdDirs.TryGetValue(dir.TrimEnd('\\'), out var who)
-                && _tree.Attribute(who.Pid, who.Time) != AttributionLevel.Outside)
+        {
+            var d = dir.TrimEnd('\\');
+            if (_foreignDirs.ContainsKey(d)) return false;
+            if (_createdDirs.TryGetValue(d, out var who) && _tree.Attribute(who.Pid, who.Time) != AttributionLevel.Outside)
                 return true;
+        }
         return false;
     }
 

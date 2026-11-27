@@ -86,8 +86,16 @@ public sealed partial class MonitorInstallViewModel : ObservableObject
         try
         {
             var footprint = await _backend.StartMonitoredInstallAsync(path, progress, CancellationToken.None, stop.Token);
-            Show(footprint);
-            Message = null;
+            if (stop.IsCancellationRequested && footprint.RootPid == 0)
+            {
+                // 安装程序还没启动就结束了：这份是空结果，别拿它顶掉界面上上一次的结果
+                Message = "已结束监控：安装程序还没有启动，这次没有记录任何东西。";
+            }
+            else
+            {
+                Show(footprint);
+                Message = null;
+            }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
